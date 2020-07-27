@@ -46,6 +46,7 @@ tmp/
 
 # Logs
 *.log
+pytest/logs
 
 # Vim tmp files
 *.swp
