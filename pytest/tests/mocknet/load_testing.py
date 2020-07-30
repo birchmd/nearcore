@@ -12,9 +12,6 @@ import mocknet
 from metrics import Metrics
 import utils
 
-nodes = mocknet.get_nodes()
-initial_validator_accounts = mocknet.list_validators(nodes[0])
-
 
 def wasm_contract():
     return utils.compile_rust_contract('''
@@ -55,12 +52,13 @@ impl LoadContract {
 
 def check_stats(initial_metrics=None,
                 final_metrics=None,
+                query_node=None,
                 duration=120,
-                include_tps=False):
+                target_tps=0):
     if initial_metrics is None:
-        initial_metrics = mocknet.get_metrics(nodes[-1])
+        initial_metrics = mocknet.get_metrics(query_node)
         time.sleep(duration)
-        final_metrics = mocknet.get_metrics(nodes[-1])
+        final_metrics = mocknet.get_metrics(query_node)
 
     delta = Metrics.diff(final_metrics, initial_metrics)
 
@@ -82,41 +80,45 @@ def check_stats(initial_metrics=None,
     assert mem_usage < 4500
     assert slow_process_blocks == 0
     assert bps > 0.5
-    if include_tps:
-        assert tps > 100
+    if target_tps > 0:
+        assert tps > target_tps
 
 
-print('INFO: Starting Load test.')
+if __name__ == '__main__':
+    nodes = mocknet.get_nodes()
+    initial_validator_accounts = mocknet.list_validators(nodes[0])
 
-print('INFO: Performing baseline block time measurement')
-# We do not include tps here because there are no transactions on mocknet normally.
-check_stats(include_tps=False)
-print('INFO: Baseline block time measurement complete')
+    print('INFO: Starting Load test.')
 
-print('INFO: Setting remote python environments.')
-mocknet.setup_python_environments(nodes, wasm_contract())
-print('INFO: Starting transaction spamming scripts.')
-mocknet.start_load_test_helpers(nodes)
+    print('INFO: Performing baseline block time measurement')
+    # We do not include tps here because there are no transactions on mocknet normally.
+    check_stats(query_node=nodes[-1])
+    print('INFO: Baseline block time measurement complete')
 
-initial_metrics = mocknet.get_metrics(nodes[-1])
-print('INFO: Waiting for transfer only period to complete.')
-time.sleep(TRANSFER_ONLY_TIMEOUT)
-transfer_final_metrics = mocknet.get_metrics(nodes[-1])
-print('INFO: Waiting for contracts to be deployed.')
-time.sleep(CONTRACT_DEPLOY_TIME)
-print('INFO: Waiting for random transactions period to complete.')
-all_tx_initial_metrics = mocknet.get_metrics(nodes[-1])
-time.sleep(ALL_TX_TIMEOUT)
-final_metrics = mocknet.get_metrics(nodes[-1])
+    print('INFO: Setting remote python environments.')
+    mocknet.setup_python_environments(nodes, [wasm_contract(), 'tests/mocknet/load_testing_helper.py'])
+    print('INFO: Starting transaction spamming scripts.')
+    mocknet.start_load_test_helpers(nodes, 'load_testing_helper.py')
 
-check_stats(initial_metrics=initial_metrics,
-            final_metrics=transfer_final_metrics,
-            include_tps=True)
-check_stats(initial_metrics=all_tx_initial_metrics,
-            final_metrics=final_metrics,
-            include_tps=False)
+    initial_metrics = mocknet.get_metrics(nodes[-1])
+    print('INFO: Waiting for transfer only period to complete.')
+    time.sleep(TRANSFER_ONLY_TIMEOUT)
+    transfer_final_metrics = mocknet.get_metrics(nodes[-1])
+    print('INFO: Waiting for contracts to be deployed.')
+    time.sleep(CONTRACT_DEPLOY_TIME)
+    print('INFO: Waiting for random transactions period to complete.')
+    all_tx_initial_metrics = mocknet.get_metrics(nodes[-1])
+    time.sleep(ALL_TX_TIMEOUT)
+    final_metrics = mocknet.get_metrics(nodes[-1])
 
-final_validator_accounts = mocknet.list_validators(nodes[0])
-assert initial_validator_accounts == final_validator_accounts
+    check_stats(initial_metrics=initial_metrics,
+                final_metrics=transfer_final_metrics,
+                target_tps=400)
+    check_stats(initial_metrics=all_tx_initial_metrics,
+                final_metrics=final_metrics,
+                target_tps=150)
 
-print('INFO: Load test complete.')
+    final_validator_accounts = mocknet.list_validators(nodes[0])
+    assert initial_validator_accounts == final_validator_accounts
+
+    print('INFO: Load test complete.')

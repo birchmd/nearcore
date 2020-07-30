@@ -151,16 +151,19 @@ def throttle_txns(send_txns, total_tx_sent, elapsed_time, max_tps, base_block_ha
     return (total_tx_sent, elapsed_time)
 
 
-if __name__ == '__main__':
+def get_test_accounts_from_args():
     node_index = int(sys.argv[1])
     pk = sys.argv[2]
     sk = sys.argv[3]
 
-    test_accounts = [
+    return [
         (Key(load_testing_account_id(i), pk, sk), i)
         for i in range(node_index * NUM_ACCOUNTS, (node_index + 1) *
                        NUM_ACCOUNTS)
     ]
+
+if __name__ == '__main__':
+    test_accounts = get_test_accounts_from_args()
 
     base_block_hash = get_latest_block_hash()
 

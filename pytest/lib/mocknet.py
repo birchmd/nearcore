@@ -33,10 +33,14 @@ PYTHON_DIR = '/home/ubuntu/.near/pytest/'
 PYTHON_SETUP_SCRIPT = f'''
 rm -rf {PYTHON_DIR}
 mkdir -p {PYTHON_DIR}
-python3 -m pip install pip --upgrade
-python3 -m pip install virtualenv --upgrade
+if [ -z $(which python3.7) ]
+then
+    sudo apt install python3.7-dev python3.7-venv -y
+fi
+python3.7 -m pip install pip --upgrade
+python3.7 -m pip install virtualenv --upgrade
 cd {PYTHON_DIR}
-python3 -m virtualenv venv -p $(which python3)
+python3 -m virtualenv venv -p $(which python3.7)
 '''
 
 INSTALL_PYTHON_REQUIREMENTS = f'''
@@ -78,41 +82,39 @@ def list_validators(node):
     return validator_accounts
 
 
-def setup_python_environment(node, wasm_contract):
+def setup_python_environment(node, additional_files):
     m = node.machine
     print(f'INFO: Setting up python environment on {m.name}')
     m.run('bash', input=PYTHON_SETUP_SCRIPT)
     m.upload('lib', PYTHON_DIR, switch_user='ubuntu')
     m.upload('requirements.txt', PYTHON_DIR, switch_user='ubuntu')
-    m.upload(wasm_contract, PYTHON_DIR, switch_user='ubuntu')
-    m.upload('tests/mocknet/load_testing_helper.py',
-             PYTHON_DIR,
-             switch_user='ubuntu')
+    for f in additional_files:
+        m.upload(f, PYTHON_DIR, switch_user='ubuntu')
     m.run('bash', input=INSTALL_PYTHON_REQUIREMENTS)
     print(f'INFO: {m.name} python setup complete')
 
 
-def setup_python_environments(nodes, wasm_contract):
-    pmap(lambda n: setup_python_environment(n, wasm_contract), nodes)
+def setup_python_environments(nodes, additional_files):
+    pmap(lambda n: setup_python_environment(n, additional_files), nodes)
 
 
-def start_load_test_helper_script(index, pk, sk):
+def start_load_test_helper_script(script_name, index, pk, sk):
     return f'''
         cd {PYTHON_DIR}
-        nohup ./venv/bin/python load_testing_helper.py {index} "{pk}" "{sk}" > load_test.out 2> load_test.err < /dev/null &
+        nohup ./venv/bin/python {script_name} {index} "{pk}" "{sk}" > load_test.out 2> load_test.err < /dev/null &
     '''
 
 
-def start_load_test_helper(node, pk, sk):
+def start_load_test_helper(node, script_name, pk, sk):
     m = node.machine
-    print(f'INFO: Starting load_test_helper on {m.name}')
+    print(f'INFO: Starting {script_name} on {m.name}')
     index = int(m.name.split('node')[-1])
-    m.run('bash', input=start_load_test_helper_script(index, pk, sk))
+    m.run('bash', input=start_load_test_helper_script(script_name, index, pk, sk))
 
 
-def start_load_test_helpers(nodes):
+def start_load_test_helpers(nodes, script_name):
     account = get_validator_account(get_node(0))
-    pmap(lambda node: start_load_test_helper(node, account.pk, account.sk),
+    pmap(lambda node: start_load_test_helper(node, script_name, account.pk, account.sk),
          nodes)
 
 
