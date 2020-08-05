@@ -110,7 +110,7 @@ def throttle_txns(send_txns, total_tx_sent, elapsed_time, max_tps, i0):
     return (total_tx_sent, elapsed_time)
 
 
-if __name__ == '__main__':
+def get_test_accounts_from_args():
     node_index = int(sys.argv[1])
     pk = sys.argv[2]
     sk = sys.argv[3]
@@ -124,9 +124,12 @@ if __name__ == '__main__':
     base_block_hash = get_latest_block_hash()
     rpc_info = (LOCAL_ADDR, RPC_PORT)
 
-    test_accounts = [(Account(key, get_nonce_for_pk(key.account_id, key.pk),
+    return [(Account(key, get_nonce_for_pk(key.account_id, key.pk),
                               base_block_hash, rpc_info), i)
                      for (key, i) in test_account_keys]
+
+if __name__ == '__main__':
+    test_accounts = get_test_accounts_from_args()
 
     i0 = test_accounts[0][1]
     start_time = time.time()

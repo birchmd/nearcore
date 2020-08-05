@@ -96,7 +96,7 @@ print('INFO: Baseline block time measurement complete')
 print('INFO: Setting remote python environments.')
 mocknet.setup_python_environments(nodes, wasm_contract())
 print('INFO: Starting transaction spamming scripts.')
-mocknet.start_load_test_helpers(nodes)
+mocknet.start_load_test_helpers(nodes, 'load_testing_helper.py')
 
 initial_metrics = mocknet.get_metrics(nodes[-1])
 print('INFO: Waiting for transfer only period to complete.')

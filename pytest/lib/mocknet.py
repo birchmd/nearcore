@@ -96,24 +96,25 @@ def setup_python_environments(nodes, wasm_contract):
     pmap(lambda n: setup_python_environment(n, wasm_contract), nodes)
 
 
-def start_load_test_helper_script(index, pk, sk):
+def start_load_test_helper_script(script, index, pk, sk):
     return f'''
         cd {PYTHON_DIR}
-        nohup ./venv/bin/python load_testing_helper.py {index} "{pk}" "{sk}" > load_test.out 2> load_test.err < /dev/null &
+        nohup ./venv/bin/python {script} {index} "{pk}" "{sk}" > load_test.out 2> load_test.err < /dev/null &
     '''
 
 
-def start_load_test_helper(node, pk, sk):
+def start_load_test_helper(node, script, pk, sk):
     m = node.machine
     print(f'INFO: Starting load_test_helper on {m.name}')
     index = int(m.name.split('node')[-1])
-    m.run('bash', input=start_load_test_helper_script(index, pk, sk))
+    m.run('bash', input=start_load_test_helper_script(script, index, pk, sk))
 
 
-def start_load_test_helpers(nodes):
+def start_load_test_helpers(nodes, script):
     account = get_validator_account(get_node(0))
-    pmap(lambda node: start_load_test_helper(node, account.pk, account.sk),
-         nodes)
+    pmap(
+        lambda node: start_load_test_helper(node, script, account.pk, account.sk
+                                           ), nodes)
 
 
 def get_log(node):
@@ -121,8 +122,10 @@ def get_log(node):
     target_file = f'./logs/{m.name}.log'
     m.download(f'/home/ubuntu/near.log', target_file)
 
+
 def get_logs(nodes):
     pmap(get_log, nodes)
+
 
 def get_epoch_length_in_blocks(node):
     m = node.machine
@@ -267,3 +270,23 @@ def start_node(node):
     if pid == '':
         start_process = m.run('sudo -u ubuntu -i', input=TMUX_START_SCRIPT)
         assert start_process.returncode == 0, m.name + '\n' + start_process.stderr
+
+
+def reset_data(node, retries=0):
+    try:
+        m = node.machine
+        stop_node(node)
+        print(f'INFO: Clearing data directory of node {m.name}')
+        start_process = m.run('bash',
+                              input='/home/ubuntu/near unsafe_reset_data')
+        assert start_process.returncode == 0, m.name + '\n' + start_process.stderr
+    except:
+        if retries < 3:
+            print(
+                f'WARN: And error occured while clearing data directory, retrying'
+            )
+            reset_data(node, retries=retries + 1)
+        else:
+            raise Exception(
+                f'ERROR: Could not clear data directory for {node.machine.name}'
+            )
