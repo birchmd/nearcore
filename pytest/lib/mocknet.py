@@ -2,6 +2,7 @@ import base58
 from cluster import GCloudNode, Key
 from metrics import Metrics
 from transaction import sign_payment_tx_and_get_hash, sign_staking_tx_and_get_hash
+import data
 import json
 import os
 import statistics
@@ -15,6 +16,7 @@ NODE_USERNAME = 'ubuntu'
 NODE_SSH_KEY_PATH = '~/.ssh/near_ops'
 KEY_TARGET_ENV_VAR = 'NEAR_PYTEST_KEY_TARGET'
 DEFAULT_KEY_TARGET = '/tmp/mocknet'
+TX_OUT_FILE = '/home/ubuntu/tx_events'
 
 TMUX_STOP_SCRIPT = '''
 while tmux has-session -t near; do
@@ -141,6 +143,55 @@ def get_metrics(node):
     (addr, port) = node.rpc_addr()
     metrics_url = f'http://{addr}:{port}/metrics'
     return Metrics.from_url(metrics_url)
+
+
+def get_timestamp(block):
+    return block['header']['timestamp'] / 1e9
+
+
+# Measure bps and tps by directly checking block timestamps and number of transactions
+# in each block.
+def deep_measure_bps_and_tps(archival_node, start_time, end_time):
+    latest_block_hash = archival_node.get_status(
+    )['sync_info']['latest_block_hash']
+    curr_block = archival_node.get_block(latest_block_hash)['result']
+    curr_time = get_timestamp(curr_block)
+    # one entry per block, equal to the timestamp of that block
+    block_times = []
+    # one entry per block (because there is only one shard), equal to the number of transactions
+    tx_count = []
+    while curr_time > start_time:
+        if curr_time < end_time:
+            block_times.append(curr_time)
+            chunk_hash = curr_block['chunks'][0]['chunk_hash']
+            chunk = archival_node.get_chunk(chunk_hash)['result']
+            tx_count.append(len(chunk['transactions']))
+        prev_hash = curr_block['header']['prev_hash']
+        curr_block = archival_node.get_block(prev_hash)['result']
+        curr_time = get_timestamp(curr_block)
+    block_times.reverse()
+    tx_count.reverse()
+    tx_cumulative = data.compute_cumulative(tx_count)
+    bps = data.compute_rate(block_times)
+    tps_fit = data.linear_regression(block_times, tx_cumulative)
+    return {'bps': bps, 'tps': tps_fit['slope']}
+
+
+def get_tx_events_single_node(node):
+    try:
+        m = node.machine
+        target_file = f'./logs/{m.name}_txs'
+        m.download(TX_OUT_FILE, target_file)
+        with open(target_file) as f:
+            return [float(line.strip()) for line in f.readlines()]
+    except:
+        return []
+
+
+def get_tx_events(nodes):
+    run('mkdir ./logs/')
+    all_events = pmap(get_tx_events_single_node, nodes)
+    return sorted(data.flatten(all_events))
 
 
 # Sends the transaction to the network via `node` and checks for success.

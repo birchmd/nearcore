@@ -10,6 +10,7 @@ from rc import pmap
 from performance_testing_helper import TEST_TIMEOUT
 
 sys.path.append('lib')
+import data
 import mocknet
 from metrics import Metrics
 
@@ -21,26 +22,31 @@ def update_genesis(nodes, gas_limit):
     genesis = json.load(open(target_file), object_pairs_hook=OrderedDict)
     genesis['gas_limit'] = gas_limit
     json.dump(genesis, open(target_file, 'w'), indent=2)
-    pmap(lambda node: node.machine.upload(target_file, dest_file, switch_user='ubuntu'), nodes)
+    pmap(
+        lambda node: node.machine.upload(
+            target_file, dest_file, switch_user='ubuntu'), nodes)
 
 
 def measure_tps(nodes):
     mocknet.setup_python_environments(
         nodes, 'tests/mocknet/performance_testing_helper.py')
     mocknet.start_load_test_helpers(nodes, 'performance_testing_helper.py')
-    metrics = []
-    start_time = time.time()
-    while time.time() - start_time < TEST_TIMEOUT:
-        metrics.append(mocknet.get_metrics(nodes[-1]))
-        time.sleep(2)
-    
-    initial_metrics = metrics[0]
-    final_metrics = metrics[-1]
-    delta = Metrics.diff(final_metrics, initial_metrics)
-    bps = statistics.mean(map(lambda m: m.blocks_per_second, metrics))
-    tps = delta.total_transactions / delta.timestamp
+    # wait for test to complete and tx event files to be written
+    time.sleep(TEST_TIMEOUT + 10)
+    input_tx_events = mocknet.get_tx_events(nodes)
+    # drop first and last 5% of events to avoid edges of test
+    n = int(0.05 * len(input_tx_events))
+    input_tx_events = input_tx_events[n:-n]
+    input_tps = data.compute_rate(input_tx_events)
+    measurement = mocknet.deep_measure_bps_and_tps(nodes[-1],
+                                                   input_tx_events[0],
+                                                   input_tx_events[-1])
 
-    return (bps, tps)
+    return {
+        'bps': measurement['bps'],
+        'in_tps': input_tps,
+        'out_tps': measurement['tps']
+    }
 
 
 if __name__ == '__main__':
@@ -57,7 +63,9 @@ if __name__ == '__main__':
         time.sleep(60)
 
         print(f'INFO: gas_limit = {gas_limit}')
-        (bps, tps) = measure_tps(nodes)
-        print(f'INFO: ({gas_limit},{bps},{tps})')
+        measurement = measure_tps(nodes)
+        (bps, in_tps, out_tps) = (measurement['bps'], measurement['in_tps'],
+                                  measurement['out_tps'])
+        print(f'INFO: ({gas_limit},{bps},{in_tps},{out_tps})')
         with open(output_file, 'a') as f:
-            f.write(f'{gas_limit},{bps},{tps}\n')
+            f.write(f'{gas_limit},{bps},{in_tps},{out_tps}\n')
