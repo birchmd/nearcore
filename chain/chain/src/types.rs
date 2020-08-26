@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use borsh::{BorshDeserialize, BorshSerialize};
+use log::warn;
 use serde::Serialize;
 
 use near_crypto::Signature;
@@ -439,7 +440,8 @@ pub trait RuntimeAdapter: Send + Sync {
         challenges_result: &ChallengesResult,
         random_seed: CryptoHash,
     ) -> Result<ApplyTransactionResult, Error> {
-        self.apply_transactions_with_optional_storage_proof(
+        let start = std::time::Instant::now();
+        let result = self.apply_transactions_with_optional_storage_proof(
             shard_id,
             state_root,
             height,
@@ -454,7 +456,9 @@ pub trait RuntimeAdapter: Send + Sync {
             challenges_result,
             random_seed,
             false,
-        )
+        );
+        warn!("runtime_adapter::apply_transactions duration: {}", start.elapsed().as_micros());
+        result
     }
 
     fn apply_transactions_with_optional_storage_proof(

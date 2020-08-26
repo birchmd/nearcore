@@ -634,8 +634,11 @@ impl Chain {
     /// Do Basic validation of a block upon receiving it. Check that header is valid
     /// and block is well-formed (various roots match).
     pub fn validate_block(&mut self, block: &Block) -> Result<(), Error> {
+        let start = std::time::Instant::now();
         self.process_block_header(&block.header(), |_| {})?;
-        block.check_validity().map_err(|e| e.into())
+        let result = block.check_validity().map_err(|e| e.into());
+        warn!("chain::validate_block duration: {}", start.elapsed().as_micros());
+        result
     }
 
     /// Process a block header received during "header first" propagation.
@@ -1087,6 +1090,7 @@ impl Chain {
 
         match maybe_new_head {
             Ok((head, needs_to_start_fetching_state)) => {
+                let start = std::time::Instant::now();
                 chain_update.chain_store_update.save_block_height_processed(block_height);
                 chain_update.commit()?;
 
@@ -1126,6 +1130,7 @@ impl Chain {
 
                 // Notify other parts of the system of the update.
                 block_accepted(AcceptedBlock { hash: *block.hash(), status, provenance });
+                warn!("chain::process_block_single/handle_new_head duration: {}", start.elapsed().as_micros());
 
                 Ok(head)
             }
@@ -2712,6 +2717,7 @@ impl<'a> ChainUpdate<'a> {
             };
             if care_about_shard {
                 if chunk_header.height_included == block.header().height() {
+                    let start = std::time::Instant::now();
                     // Validate state root.
                     let prev_chunk_extra = self
                         .chain_store_update
@@ -2762,6 +2768,7 @@ impl<'a> ChainUpdate<'a> {
                             chunk_proof,
                         ))));
                     }
+                    warn!("chain::apply_chunks/validation duration: {}", start.elapsed().as_micros());
 
                     let gas_limit = chunk.header.inner.gas_limit;
 
@@ -2803,6 +2810,7 @@ impl<'a> ChainUpdate<'a> {
                         ),
                     );
                     // Save resulting receipts.
+                    let start = std::time::Instant::now();
                     let mut outgoing_receipts = vec![];
                     for (receipt_shard_id, receipts) in apply_result.receipt_result.drain() {
                         // The receipts in store are indexed by the SOURCE shard_id, not destination,
@@ -2826,6 +2834,7 @@ impl<'a> ChainUpdate<'a> {
                         outcome_paths,
                     );
                     self.chain_store_update.save_transactions(chunk.transactions);
+                    warn!("chain::apply_chunks/save_receipts_and_transactions duration: {}", start.elapsed().as_micros());
                 } else {
                     let mut new_extra = self
                         .chain_store_update
@@ -2895,6 +2904,7 @@ impl<'a> ChainUpdate<'a> {
         }
 
         // First real I/O expense.
+        let start = std::time::Instant::now();
         let prev = self.get_previous_header(block.header())?;
         let prev_hash = *prev.hash();
         let prev_prev_hash = *prev.prev_hash();
@@ -2989,6 +2999,7 @@ impl<'a> ChainUpdate<'a> {
                 }
             }
         }
+        warn!("ChainUpdate::process_block/validation duration: {}", start.elapsed().as_micros());
 
         // Always apply state transition for shards in the current epoch
         self.apply_chunks(me, block, &prev_block, ApplyChunksMode::ThisEpoch)?;
@@ -3002,6 +3013,7 @@ impl<'a> ChainUpdate<'a> {
         }
 
         // Verify that proposals from chunks match block header proposals.
+        let start = std::time::Instant::now();
         let mut all_chunk_proposals = vec![];
         for chunk in block.chunks().iter() {
             if block.header().height() == chunk.height_included {
@@ -3023,8 +3035,10 @@ impl<'a> ChainUpdate<'a> {
             &block.header(),
             last_finalized_height,
         ))?;
+        warn!("ChainUpdate::process_block/proposals duration: {}", start.elapsed().as_micros());
 
         // Add validated block to the db, even if it's not the canonical fork.
+        let start = std::time::Instant::now();
         self.chain_store_update.save_block(block.clone());
         self.chain_store_update.inc_block_refcount(block.header().prev_hash())?;
         for (shard_id, chunk_headers) in block.chunks().iter().enumerate() {
@@ -3036,6 +3050,7 @@ impl<'a> ChainUpdate<'a> {
 
         // Update the chain head if it's the new tip
         let res = self.update_head(block)?;
+        warn!("ChainUpdate::process_block/update_db duration: {}", start.elapsed().as_micros());
 
         if res.is_some() {
             // On the epoch switch record the epoch light client block

@@ -1002,6 +1002,7 @@ impl ShardsManager {
             }
         };
 
+        let start = std::time::Instant::now();
         // 3. Checking chunk height
         let chunk_requested = self.requested_partial_encoded_chunks.contains_key(&chunk_hash);
         if !chunk_requested {
@@ -1061,9 +1062,11 @@ impl ShardsManager {
                 }
             }
         }
+        warn!("ShardsManager::process_partial_encoded_chunk/validity duration: {}", start.elapsed().as_micros());
 
         // Consider it valid
         // Store chunk hash into chunk_hash_per_height_shard collection
+        let start = std::time::Instant::now();
         let mut store_update = chain_store.store_update();
         store_update.save_chunk_hash(
             header.inner.height_created,
@@ -1094,6 +1097,7 @@ impl ShardsManager {
             self.encoded_chunks.insert_chunk_header(header.inner.shard_id, header.clone());
         }
         let entry = self.encoded_chunks.get(&chunk_hash).unwrap();
+        warn!("ShardsManager::process_partial_encoded_chunk/storage_and_bookkeeping duration: {}", start.elapsed().as_micros());
 
         // TODO(#3180): seals are disabled in single shard setting
         /*let seal = self.seals_mgr.get_seal(
@@ -1113,9 +1117,11 @@ impl ShardsManager {
             );
 
             if let Err(_) = chain_store.get_partial_chunk(&header.chunk_hash()) {
+                let start = std::time::Instant::now();
                 let mut store_update = chain_store.store_update();
                 self.persist_partial_chunk_for_data_availability(entry, &mut store_update);
                 store_update.commit()?;
+                warn!("ShardsManager::process_partial_encoded_chunk/persist_partial_chunk_for_data_availability duration: {}", start.elapsed().as_micros());
             }
 
             // If all the parts and receipts are received, and we don't care about the shard,
@@ -1133,6 +1139,8 @@ impl ShardsManager {
 
         if can_reconstruct {
             let height = header.inner.height_created;
+            warn!("EVENT reconstruct chunk height={} chunk_hash={}", height, header.hash.0);
+            let start = std::time::Instant::now();
             let mut encoded_chunk =
                 EncodedShardChunk::from_header(header, self.runtime_adapter.num_total_parts());
 
@@ -1149,6 +1157,7 @@ impl ShardsManager {
 
             self.encoded_chunks.remove_from_cache_if_outside_horizon(&chunk_hash);
             self.requested_partial_encoded_chunks.remove(&chunk_hash);
+            warn!("ShardsManager::process_partial_encoded_chunk/reconstruction duration: {}", start.elapsed().as_micros());
             return Ok(ProcessPartialEncodedChunkResult::HaveAllPartsAndReceipts(prev_block_hash));
         }
 
@@ -1393,6 +1402,7 @@ impl ShardsManager {
         outgoing_receipts: Vec<Receipt>,
         chain_store: &mut ChainStore,
     ) -> Result<(), Error> {
+        let start = std::time::Instant::now();
         // TODO: if the number of validators exceeds the number of parts, this logic must be changed
         let prev_block_hash = encoded_chunk.header.inner.prev_block_hash;
         let shard_id = encoded_chunk.header.inner.shard_id;
@@ -1450,6 +1460,7 @@ impl ShardsManager {
         // Store the chunk in the permanent storage
         self.decode_and_persist_encoded_chunk(encoded_chunk, chain_store, merkle_paths)?;
 
+        warn!("ShardsManager::distribute_encoded_chunk duration: {}", start.elapsed().as_micros());
         Ok(())
     }
 }

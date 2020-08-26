@@ -288,6 +288,7 @@ impl Client {
     /// Produce block if we are block producer for given `next_height` block height.
     /// Either returns produced block (not applied) or error.
     pub fn produce_block(&mut self, next_height: BlockHeight) -> Result<Option<Block>, Error> {
+        let start = std::time::Instant::now();
         let known_height = self.chain.mut_store().get_latest_known()?.height;
 
         let validator_signer = self
@@ -441,6 +442,7 @@ impl Client {
             seen: to_timestamp(Utc::now()),
         })?;
 
+        warn!("client::produce_block duration: {}", start.elapsed().as_micros());
         Ok(Some(block))
     }
 
@@ -492,7 +494,10 @@ impl Client {
             .clone();
 
         let prev_block_header = self.chain.get_block_header(&prev_block_hash)?.clone();
+        let start = std::time::Instant::now();
         let transactions = self.prepare_transactions(shard_id, &chunk_extra, &prev_block_header);
+        warn!("client::produce_chunk/prepare_transactions duration: {}", start.elapsed().as_micros());
+        let start = std::time::Instant::now();
         let num_filtered_transactions = transactions.len();
         let (tx_root, _) = merklize(&transactions);
         let ReceiptResponse(_, outgoing_receipts) = self.chain.get_outgoing_receipts_for_shard(
@@ -517,6 +522,8 @@ impl Client {
             self.runtime_adapter.build_receipts_hashes(&outgoing_receipts);
         let (outgoing_receipts_root, _) = merklize(&outgoing_receipts_hashes);
 
+        warn!("client::produce_chunk/receipts_and_merklize duration: {}", start.elapsed().as_micros());
+        let start = std::time::Instant::now();
         let (encoded_chunk, merkle_paths) = self.shards_mgr.create_encoded_shard_chunk(
             prev_block_hash,
             chunk_extra.state_root,
@@ -534,10 +541,11 @@ impl Client {
             &*validator_signer,
             &mut self.rs,
         )?;
+        warn!("client::produce_chunk/create_encoded_shard_chunk duration: {}", start.elapsed().as_micros());
 
-        debug!(
+        warn!(
             target: "client",
-            "Produced chunk at height {} for shard {} with {} txs and {} receipts, I'm {}, chunk_hash: {}",
+            "EVENT Produced chunk height={} shard_id={} num_txs={} num_receipts={} validator={} chunk_hash={}",
             next_height,
             shard_id,
             num_filtered_transactions,
