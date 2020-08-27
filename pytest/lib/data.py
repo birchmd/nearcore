@@ -91,7 +91,7 @@ def flatten_dict(d):
         return result
 
 
-def dict_to_csv(ds, filename):
+def dict_to_csv(ds, filename, mode='w'):
     '''
     Serializes a list of dictionaries to a csv file. Each element of the list is
     assumed to correspond to a single row. If the dictionary contains nested
@@ -101,7 +101,7 @@ def dict_to_csv(ds, filename):
     '''
     keys = sorted(list(flatten_dict(ds[0]).keys()))
     header = ','.join(keys)
-    with open(filename, 'w') as output:
+    with open(filename, mode) as output:
         output.write(header + '\n')
         for d in ds:
             f = flatten_dict(d)

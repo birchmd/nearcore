@@ -8,7 +8,7 @@ sys.path.append('lib')
 from mocknet import NUM_NODES, TX_OUT_FILE
 
 TEST_TIMEOUT = 180
-MAX_TPS = 2000  # maximum transactions per second sent (across the whole network)
+MAX_TPS = 10000
 MAX_TPS_PER_NODE = MAX_TPS / NUM_NODES
 
 
