@@ -1,6 +1,6 @@
 //! Client actor orchestrates Client and facilitates network connection.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, RwLock};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -63,6 +63,18 @@ const BLOCK_HORIZON: u64 = 500;
 /// the current `head`
 const HEAD_STALL_MULTIPLIER: u32 = 4;
 
+/// Amount of time (in milliseconds) the `ClientActor` is allowed to spend on processing
+/// messages which are not critical to the blockchain. The purpose of this constant is to
+/// allow the node to continue to function well, even when it is receiving many messages.
+const ALLOWED_NON_CRITICAL_COMPUTATION_TIME_MILLIS: u64 = 10;
+
+/// Size of the sliding window (in milliseconds) over which the `ClientActor` enforces the
+/// limit on time spent processing non-critical messages. Logic in `ClientActor::handle` ensures
+/// that during the last `NON_CRITICAL_LIMIT_TIME_WINDOW_MILLIS` milliseconds, no more than
+/// `ALLOWED_NON_CRITICAL_COMPUTATION_TIME_MILLIS` milliseconds of computational time is spent
+/// processing non-critical messages.
+const NON_CRITICAL_LIMIT_TIME_WINDOW_MILLIS: u64 = 200;
+
 pub struct ClientActor {
     /// Adversarial controls
     #[cfg(feature = "adversarial")]
@@ -85,6 +97,15 @@ pub struct ClientActor {
     doomslug_timer_next_attempt: DateTime<Utc>,
     chunk_request_retry_next_attempt: DateTime<Utc>,
     sync_started: bool,
+
+    /// Total time that has been spent processing non-critical messages during the
+    /// last `NON_CRITICAL_LIMIT_TIME_WINDOW_MILLIS` milliseconds.
+    non_critical_processing_time_spent: Duration,
+    /// Queue recording past instants where non-critical processing began
+    /// and how long that processing took. Elements from this queue are dropped
+    /// if the instant they began is longer than `NON_CRITICAL_LIMIT_TIME_WINDOW_MILLIS`
+    /// milliseconds ago.
+    non_critical_processing: VecDeque<(Instant, Duration)>,
 }
 
 /// Blocks the program until given genesis time arrives.
@@ -158,41 +179,12 @@ impl ClientActor {
             doomslug_timer_next_attempt: now,
             chunk_request_retry_next_attempt: now,
             sync_started: false,
+            non_critical_processing_time_spent: Duration::default(),
+            non_critical_processing: VecDeque::new(),
         })
     }
-}
 
-impl Actor for ClientActor {
-    type Context = Context<Self>;
-
-    fn started(&mut self, ctx: &mut Self::Context) {
-        // Start syncing job.
-        self.start_sync(ctx);
-
-        // Start block production tracking if have block producer info.
-        if self.client.validator_signer.is_some() {
-            self.block_production_started = true;
-        }
-
-        // Start triggers
-        self.schedule_triggers(ctx);
-
-        // Start catchup job.
-        self.catchup(ctx);
-
-        // Start periodic logging of current state of the client.
-        self.log_summary(ctx);
-    }
-}
-
-impl Handler<NetworkClientMessages> for ClientActor {
-    type Result = NetworkClientResponses;
-
-    fn handle(&mut self, msg: NetworkClientMessages, ctx: &mut Context<Self>) -> Self::Result {
-        #[cfg(feature = "delay_detector")]
-        let _d = DelayDetector::new(format!("NetworkClientMessage {}", msg.as_ref()).into());
-        self.check_triggers(ctx);
-
+    fn internal_handle_msg(&mut self, msg: NetworkClientMessages) -> NetworkClientResponses {
         match msg {
             #[cfg(feature = "adversarial")]
             NetworkClientMessages::Adversarial(adversarial_msg) => {
@@ -348,9 +340,9 @@ impl Handler<NetworkClientMessages> for ClientActor {
                 state_response,
             }) => {
                 trace!(target: "sync", "Received state response shard_id: {} sync_hash: {:?} part(id/size): {:?}",
-                    shard_id,
-                    hash,
-                    state_response.part.as_ref().map(|(part_id,data)|(part_id, data.len()))
+                       shard_id,
+                       hash,
+                       state_response.part.as_ref().map(|(part_id,data)|(part_id, data.len()))
                 );
                 // Get the download that matches the shard_id and hash
                 let download = {
@@ -498,6 +490,68 @@ impl Handler<NetworkClientMessages> for ClientActor {
                 NetworkClientResponses::NoResponse
             }
         }
+    }
+}
+
+impl Actor for ClientActor {
+    type Context = Context<Self>;
+
+    fn started(&mut self, ctx: &mut Self::Context) {
+        // Start syncing job.
+        self.start_sync(ctx);
+
+        // Start block production tracking if have block producer info.
+        if self.client.validator_signer.is_some() {
+            self.block_production_started = true;
+        }
+
+        // Start triggers
+        self.schedule_triggers(ctx);
+
+        // Start catchup job.
+        self.catchup(ctx);
+
+        // Start periodic logging of current state of the client.
+        self.log_summary(ctx);
+    }
+}
+
+impl Handler<NetworkClientMessages> for ClientActor {
+    type Result = NetworkClientResponses;
+
+    fn handle(&mut self, msg: NetworkClientMessages, ctx: &mut Context<Self>) -> Self::Result {
+        #[cfg(feature = "delay_detector")]
+        let _d = DelayDetector::new(format!("NetworkClientMessage {}", msg.as_ref()).into());
+        self.check_triggers(ctx);
+
+        let processing_start = Instant::now();
+
+        while self.non_critical_processing.front().map(|(i, _)| i.elapsed()).unwrap_or_default()
+            > Duration::from_millis(NON_CRITICAL_LIMIT_TIME_WINDOW_MILLIS)
+        {
+            self.non_critical_processing_time_spent -=
+                self.non_critical_processing.pop_front().unwrap().1;
+        }
+
+        let is_non_critical =
+            if let NetworkClientMessages::Transaction { .. } = msg { true } else { false };
+
+        if is_non_critical
+            && self.non_critical_processing_time_spent
+                > Duration::from_millis(ALLOWED_NON_CRITICAL_COMPUTATION_TIME_MILLIS)
+        {
+            return NetworkClientResponses::NoResponse;
+        }
+
+        let result = self.internal_handle_msg(msg);
+
+        if is_non_critical {
+            let duration = processing_start.elapsed();
+            self.non_critical_processing.push_back((processing_start, duration));
+            self.non_critical_processing_time_spent += duration;
+        }
+
+        result
     }
 }
 
