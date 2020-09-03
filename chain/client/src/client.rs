@@ -31,7 +31,10 @@ use near_primitives::sharding::{
 };
 use near_primitives::syncing::ReceiptResponse;
 use near_primitives::transaction::SignedTransaction;
-use near_primitives::types::{AccountId, ApprovalStake, BlockHeight, ChunkExtra, EpochId, ShardId};
+use near_primitives::types::{
+    AccountId, ApprovalStake, BlockHeight, BlockHeightDelta, ChunkExtra, EpochId, ShardId,
+    StateRoot,
+};
 use near_primitives::unwrap_or_return;
 use near_primitives::utils::to_timestamp;
 use near_primitives::validator_signer::ValidatorSigner;
@@ -1115,20 +1118,35 @@ impl Client {
     }
 
     /// Forwards given transaction to upcoming validators.
-    fn forward_tx(&self, epoch_id: &EpochId, tx: &SignedTransaction) -> Result<(), Error> {
-        let shard_id = self.runtime_adapter.account_id_to_shard_id(&tx.transaction.signer_id);
-        let head = self.chain.head()?;
-        let maybe_next_epoch_id = self.get_next_epoch_id_if_at_boundary(&head)?;
+    fn forward_tx(
+        head: &Tip,
+        runtime_adapter: &Arc<dyn RuntimeAdapter>,
+        epoch_length: BlockHeightDelta,
+        epoch_id: &EpochId,
+        tx: &SignedTransaction,
+        network_adapter: &Arc<dyn NetworkAdapter>,
+        validator_signer: Option<&String>,
+    ) -> Result<(), Error> {
+        let shard_id = runtime_adapter.account_id_to_shard_id(&tx.transaction.signer_id);
+        let maybe_next_epoch_id =
+            Self::get_next_epoch_id_if_at_boundary(runtime_adapter, epoch_length, &head)?;
 
         let mut validators = HashSet::new();
         for horizon in
             (2..=TX_ROUTING_HEIGHT_HORIZON).chain(vec![TX_ROUTING_HEIGHT_HORIZON * 2].into_iter())
         {
-            let validator =
-                self.chain.find_chunk_producer_for_forwarding(epoch_id, shard_id, horizon)?;
+            let validator = Chain::find_chunk_producer_for_forwarding(
+                head,
+                runtime_adapter,
+                epoch_id,
+                shard_id,
+                horizon,
+            )?;
             validators.insert(validator);
             if let Some(next_epoch_id) = &maybe_next_epoch_id {
-                let validator = self.chain.find_chunk_producer_for_forwarding(
+                let validator = Chain::find_chunk_producer_for_forwarding(
+                    head,
+                    runtime_adapter,
                     next_epoch_id,
                     shard_id,
                     horizon,
@@ -1137,20 +1155,20 @@ impl Client {
             }
         }
 
-        if let Some(account_id) = self.validator_signer.as_ref().map(|bp| bp.validator_id()) {
+        if let Some(account_id) = validator_signer {
             validators.remove(account_id);
         }
         for validator in validators {
             debug!(target: "client",
                    "I'm {:?}, routing a transaction {:?} to {}, shard_id = {}",
-                   self.validator_signer.as_ref().map(|bp| bp.validator_id()),
+                   validator_signer,
                    tx,
                    validator,
                    shard_id
             );
 
             // Send message to network to actually forward transaction.
-            self.network_adapter.do_send(NetworkRequests::ForwardTx(validator, tx.clone()));
+            network_adapter.do_send(NetworkRequests::ForwardTx(validator, tx.clone()));
         }
 
         Ok(())
@@ -1170,20 +1188,23 @@ impl Client {
     }
 
     /// If we are close to epoch boundary, return next epoch id, otherwise return None.
-    fn get_next_epoch_id_if_at_boundary(&self, head: &Tip) -> Result<Option<EpochId>, Error> {
+    fn get_next_epoch_id_if_at_boundary(
+        runtime_adapter: &Arc<dyn RuntimeAdapter>,
+        epoch_length: BlockHeightDelta,
+        head: &Tip,
+    ) -> Result<Option<EpochId>, Error> {
         let next_epoch_started =
-            self.runtime_adapter.is_next_block_epoch_start(&head.last_block_hash)?;
+            runtime_adapter.is_next_block_epoch_start(&head.last_block_hash)?;
         if next_epoch_started {
             return Ok(None);
         }
         let next_epoch_estimated_height =
-            self.runtime_adapter.get_epoch_start_height(&head.last_block_hash)?
-                + self.config.epoch_length;
+            runtime_adapter.get_epoch_start_height(&head.last_block_hash)? + epoch_length;
 
         let epoch_boundary_possible =
             head.height + TX_ROUTING_HEIGHT_HORIZON >= next_epoch_estimated_height;
         if epoch_boundary_possible {
-            Ok(Some(self.runtime_adapter.get_next_epoch_id_from_prev_block(&head.last_block_hash)?))
+            Ok(Some(runtime_adapter.get_next_epoch_id_from_prev_block(&head.last_block_hash)?))
         } else {
             Ok(None)
         }
@@ -1191,12 +1212,126 @@ impl Client {
 
     /// If we're a validator in one of the next few chunks, but epoch switch could happen soon,
     /// we forward to a validator from next epoch.
-    fn possibly_forward_tx_to_next_epoch(&mut self, tx: &SignedTransaction) -> Result<(), Error> {
-        let head = self.chain.head()?;
-        if let Some(next_epoch_id) = self.get_next_epoch_id_if_at_boundary(&head)? {
-            self.forward_tx(&next_epoch_id, tx)?;
+    fn possibly_forward_tx_to_next_epoch(
+        runtime_adapter: &Arc<dyn RuntimeAdapter>,
+        epoch_length: BlockHeightDelta,
+        head: &Tip,
+        tx: &SignedTransaction,
+        network_adapter: &Arc<dyn NetworkAdapter>,
+        validator_signer: Option<&String>,
+    ) -> Result<(), Error> {
+        if let Some(next_epoch_id) =
+            Self::get_next_epoch_id_if_at_boundary(runtime_adapter, epoch_length, &head)?
+        {
+            Self::forward_tx(
+                head,
+                runtime_adapter,
+                epoch_length,
+                &next_epoch_id,
+                tx,
+                network_adapter,
+                validator_signer,
+            )?;
         }
         Ok(())
+    }
+
+    fn validate_and_forward_tx(
+        tx: &SignedTransaction,
+        is_forwarded: bool,
+        check_only: bool,
+        runtime_adapter: &Arc<dyn RuntimeAdapter>,
+        network_adapter: &Arc<dyn NetworkAdapter>,
+        gas_price: u128,
+        shard_id: ShardId,
+        head: &Tip,
+        maybe_state_root: Option<StateRoot>,
+        epoch_length: BlockHeightDelta,
+        validator_signer: Option<&String>,
+        cares_about_shard: bool,
+    ) -> Result<NetworkClientResponses, Error> {
+        let epoch_id = runtime_adapter.get_epoch_id_from_prev_block(&head.last_block_hash)?;
+
+        if let Some(err) = runtime_adapter
+            .validate_tx(gas_price, maybe_state_root, &tx, true)
+            .expect("no storage errors")
+        {
+            debug!(target: "client", "Invalid tx: {:?}", err);
+            return Ok(NetworkClientResponses::InvalidTx(err));
+        }
+
+        if cares_about_shard && maybe_state_root.is_none() {
+            // Not being able to fetch a state root most likely implies that we haven't
+            //     caught up with the next epoch yet.
+            return if is_forwarded {
+                Err(ErrorKind::Other("Node has not caught up yet".to_string()).into())
+            } else {
+                Self::forward_tx(
+                    &head,
+                    runtime_adapter,
+                    epoch_length,
+                    &epoch_id,
+                    tx,
+                    network_adapter,
+                    validator_signer,
+                )?;
+                Ok(NetworkClientResponses::RequestRouted)
+            };
+        }
+
+        if cares_about_shard {
+            if check_only {
+                return Ok(NetworkClientResponses::ValidTx);
+            }
+            // If I'm not an active validator I should forward tx to next validators.
+            let active_validator =
+                Self::active_validator(head, runtime_adapter, validator_signer, shard_id)?;
+            if active_validator {
+                if !is_forwarded {
+                    Self::possibly_forward_tx_to_next_epoch(
+                        runtime_adapter,
+                        epoch_length,
+                        &head,
+                        tx,
+                        network_adapter,
+                        validator_signer,
+                    )?;
+                }
+                Ok(NetworkClientResponses::ValidTx)
+            } else if !is_forwarded {
+                Self::forward_tx(
+                    &head,
+                    runtime_adapter,
+                    epoch_length,
+                    &epoch_id,
+                    tx,
+                    network_adapter,
+                    validator_signer,
+                )?;
+                Ok(NetworkClientResponses::RequestRouted)
+            } else {
+                Ok(NetworkClientResponses::NoResponse)
+            }
+        } else if check_only {
+            Ok(NetworkClientResponses::DoesNotTrackShard)
+        } else {
+            if is_forwarded {
+                // received forwarded transaction but we are not tracking the shard
+                debug!(target: "client", "Received forwarded transaction but no tracking shard {}, I'm {:?}", shard_id, validator_signer);
+                return Ok(NetworkClientResponses::NoResponse);
+            }
+
+            Self::forward_tx(
+                head,
+                runtime_adapter,
+                epoch_length,
+                &epoch_id,
+                tx,
+                network_adapter,
+                validator_signer,
+            )?;
+            Ok(NetworkClientResponses::RequestRouted)
+        }
     }
 
     /// Process transaction and either add it to the mempool or return to redirect to another validator.
@@ -1223,106 +1358,79 @@ impl Client {
             return Ok(NetworkClientResponses::InvalidTx(e));
         }
         let gas_price = cur_block_header.gas_price();
-        let epoch_id = self.runtime_adapter.get_epoch_id_from_prev_block(&head.last_block_hash)?;
-
-        if let Some(err) =
-            self.runtime_adapter.validate_tx(gas_price, None, &tx, true).expect("no storage errors")
-        {
-            debug!(target: "client", "Invalid tx during basic validation: {:?}", err);
-            return Ok(NetworkClientResponses::InvalidTx(err));
-        }
-
-        if self.runtime_adapter.cares_about_shard(me, &head.last_block_hash, shard_id, true)
-            || self.runtime_adapter.will_care_about_shard(me, &head.last_block_hash, shard_id, true)
-        {
-            let state_root = match self.chain.get_chunk_extra(&head.last_block_hash, shard_id) {
-                Ok(chunk_extra) => chunk_extra.state_root,
-                Err(_) => {
-                    // Not being able to fetch a state root most likely implies that we haven't
-                    //     caught up with the next epoch yet.
-                    if is_forwarded {
-                        return Err(
-                            ErrorKind::Other("Node has not caught up yet".to_string()).into()
-                        );
-                    } else {
-                        self.forward_tx(&epoch_id, tx)?;
-                        return Ok(NetworkClientResponses::RequestRouted);
-                    }
-                }
-            };
-            if let Some(err) = self
-                .runtime_adapter
-                .validate_tx(gas_price, Some(state_root), &tx, false)
-                .expect("no storage errors")
-            {
-                debug!(target: "client", "Invalid tx: {:?}", err);
-                Ok(NetworkClientResponses::InvalidTx(err))
-            } else if check_only {
-                Ok(NetworkClientResponses::ValidTx)
-            } else {
-                let active_validator = self.active_validator(shard_id)?;
-
-                // If I'm not an active validator I should forward tx to next validators.
-                debug!(
-                    target: "client",
-                    "Recording a transaction. I'm {:?}, {} is_forwarded: {}",
+        let cares_about_shard =
+            self.runtime_adapter.cares_about_shard(me, &head.last_block_hash, shard_id, true)
+                || self.runtime_adapter.will_care_about_shard(
                     me,
+                    &head.last_block_hash,
                     shard_id,
-                    is_forwarded
+                    true,
                 );
-                self.shards_mgr.insert_transaction(shard_id, tx.clone());
-
-                // Active validator:
-                //   possibly forward to next epoch validators
-                // Not active validator:
-                //   forward to current epoch validators,
-                //   possibly forward to next epoch validators
-                if active_validator {
-                    if !is_forwarded {
-                        self.possibly_forward_tx_to_next_epoch(tx)?;
-                    }
-                    Ok(NetworkClientResponses::ValidTx)
-                } else if !is_forwarded {
-                    self.forward_tx(&epoch_id, tx)?;
-                    Ok(NetworkClientResponses::RequestRouted)
-                } else {
-                    Ok(NetworkClientResponses::NoResponse)
-                }
-            }
-        } else if check_only {
-            Ok(NetworkClientResponses::DoesNotTrackShard)
+        let maybe_state_root = if cares_about_shard {
+            self.chain
+                .get_chunk_extra(&head.last_block_hash, shard_id)
+                .ok()
+                .map(|chunk_extra| chunk_extra.state_root)
         } else {
-            if is_forwarded {
-                // received forwarded transaction but we are not tracking the shard
-                debug!(target: "client", "Received forwarded transaction but no tracking shard {}, I'm {:?}", shard_id, me);
-                return Ok(NetworkClientResponses::NoResponse);
-            }
-            // We are not tracking this shard, so there is no way to validate this tx. Just rerouting.
+            None
+        };
+        let response = Self::validate_and_forward_tx(
+            tx,
+            is_forwarded,
+            check_only,
+            &self.runtime_adapter,
+            &self.network_adapter,
+            gas_price,
+            shard_id,
+            &head,
+            maybe_state_root,
+            self.config.epoch_length,
+            me,
+            cares_about_shard,
+        )?;
 
-            self.forward_tx(&epoch_id, tx)?;
-            Ok(NetworkClientResponses::RequestRouted)
+        // Do not store invalid transactions
+        if let NetworkClientResponses::InvalidTx(_) = response {
+            return Ok(response);
         }
+
+        if !check_only && maybe_state_root.is_some() {
+            debug!(
+                target: "client",
+                "Recording a transaction. I'm {:?}, {} is_forwarded: {}",
+                me,
+                shard_id,
+                is_forwarded
+            );
+            self.shards_mgr.insert_transaction(shard_id, tx.clone());
+        }
+
+        Ok(response)
     }
 
     /// Determine if I am a validator in next few blocks for specified shard, assuming epoch doesn't change.
-    fn active_validator(&self, shard_id: ShardId) -> Result<bool, Error> {
-        let head = self.chain.head()?;
-        let epoch_id = self.runtime_adapter.get_epoch_id_from_prev_block(&head.last_block_hash)?;
+    fn active_validator(
+        head: &Tip,
+        runtime_adapter: &Arc<dyn RuntimeAdapter>,
+        validator_signer: Option<&String>,
+        shard_id: ShardId,
+    ) -> Result<bool, Error> {
+        match validator_signer {
+            None => Ok(false),
+            Some(account_id) => {
+                let epoch_id =
+                    runtime_adapter.get_epoch_id_from_prev_block(&head.last_block_hash)?;
 
-        let account_id = if let Some(vs) = self.validator_signer.as_ref() {
-            vs.validator_id()
-        } else {
-            return Ok(false);
-        };
-
-        for i in 1..=TX_ROUTING_HEIGHT_HORIZON {
-            let chunk_producer =
-                self.runtime_adapter.get_chunk_producer(&epoch_id, head.height + i, shard_id)?;
-            if &chunk_producer == account_id {
-                return Ok(true);
+                for i in 1..=TX_ROUTING_HEIGHT_HORIZON {
+                    let chunk_producer =
+                        runtime_adapter.get_chunk_producer(&epoch_id, head.height + i, shard_id)?;
+                    if &chunk_producer == account_id {
+                        return Ok(true);
+                    }
+                }
+                Ok(false)
             }
         }
-        Ok(false)
     }
 
     /// Walks through all the ongoing state syncs for future epochs and processes them

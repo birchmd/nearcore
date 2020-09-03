@@ -1945,21 +1945,27 @@ impl Chain {
 
     /// Find a validator to forward transactions to
     pub fn find_chunk_producer_for_forwarding(
-        &self,
+        head: &Tip,
+        runtime_adapter: &Arc<dyn RuntimeAdapter>,
         epoch_id: &EpochId,
         shard_id: ShardId,
         horizon: BlockHeight,
     ) -> Result<AccountId, Error> {
-        let head = self.head()?;
         let target_height = head.height + horizon - 1;
-        self.runtime_adapter.get_chunk_producer(&epoch_id, target_height, shard_id)
+        runtime_adapter.get_chunk_producer(&epoch_id, target_height, shard_id)
     }
 
     /// Find a validator that is responsible for a given shard to forward requests to
     pub fn find_validator_for_forwarding(&self, shard_id: ShardId) -> Result<AccountId, Error> {
         let head = self.head()?;
         let epoch_id = self.runtime_adapter.get_epoch_id_from_prev_block(&head.last_block_hash)?;
-        self.find_chunk_producer_for_forwarding(&epoch_id, shard_id, TX_ROUTING_HEIGHT_HORIZON)
+        Self::find_chunk_producer_for_forwarding(
+            &head,
+            &self.runtime_adapter,
+            &epoch_id,
+            shard_id,
+            TX_ROUTING_HEIGHT_HORIZON,
+        )
     }
 
     pub fn check_block_final_and_canonical(
