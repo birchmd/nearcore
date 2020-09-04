@@ -9,7 +9,10 @@ use tracing::trace;
 use near_chain::ChainGenesis;
 #[cfg(feature = "adversarial")]
 use near_client::AdversarialControls;
-use near_client::{start_client, start_view_client, ClientActor, ViewClientActor};
+use near_client::{
+    start_client, start_view_client, ClientActor, IncomingTxHandler, SetIncomingTxHandler,
+    ViewClientActor,
+};
 use near_jsonrpc::start_http;
 use near_network::{NetworkRecipient, PeerManagerActor};
 use near_store::migrations::{
@@ -174,7 +177,7 @@ pub fn start_with_config(
     let (client_actor, client_arbiter) = start_client(
         config.client_config,
         chain_genesis,
-        runtime,
+        runtime.clone(),
         node_id,
         network_adapter.clone(),
         config.validator_signer,
@@ -182,6 +185,9 @@ pub fn start_with_config(
         #[cfg(feature = "adversarial")]
         adv.clone(),
     );
+    let tx_validation_actor =
+        IncomingTxHandler::start(2, runtime, network_adapter.clone(), client_actor.clone());
+    client_actor.do_send(SetIncomingTxHandler(tx_validation_actor));
     start_http(
         config.rpc_config,
         Arc::clone(&config.genesis),

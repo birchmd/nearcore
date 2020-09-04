@@ -39,10 +39,12 @@ use near_primitives::unwrap_or_return;
 use near_primitives::utils::to_timestamp;
 use near_primitives::validator_signer::ValidatorSigner;
 
+use crate::incoming_tx_handler::{IncomingTx, IncomingTxHandler};
 use crate::metrics;
 use crate::sync::{BlockSync, HeaderSync, StateSync, StateSyncResult};
 use crate::types::{Error, ShardSyncDownload};
 use crate::SyncStatus;
+use actix::Addr;
 
 const NUM_REBROADCAST_BLOCKS: usize = 30;
 
@@ -1180,11 +1182,24 @@ impl Client {
         is_forwarded: bool,
         check_only: bool,
     ) -> NetworkClientResponses {
-        unwrap_or_return!(self.process_tx_internal(&tx, is_forwarded, check_only), {
+        unwrap_or_return!(self.process_tx_internal(&tx, is_forwarded, check_only, None), {
             let me = self.validator_signer.as_ref().map(|vs| vs.validator_id());
             warn!(target: "client", "I'm: {:?} Dropping tx: {:?}", me, tx);
             NetworkClientResponses::NoResponse
         })
+    }
+
+    pub fn process_tx_with_actor(
+        &mut self,
+        tx: SignedTransaction,
+        is_forwarded: bool,
+        check_only: bool,
+        tx_validation_actor: &Addr<IncomingTxHandler>,
+    ) -> NetworkClientResponses {
+        unwrap_or_return!(
+            self.process_tx_internal(&tx, is_forwarded, check_only, Some(tx_validation_actor)),
+            NetworkClientResponses::NoResponse
+        )
     }
 
     /// If we are close to epoch boundary, return next epoch id, otherwise return None.
@@ -1236,7 +1251,7 @@ impl Client {
         Ok(())
     }
 
-    fn validate_and_forward_tx(
+    pub fn validate_and_forward_tx(
         tx: &SignedTransaction,
         is_forwarded: bool,
         check_only: bool,
@@ -1340,6 +1355,7 @@ impl Client {
         tx: &SignedTransaction,
         is_forwarded: bool,
         check_only: bool,
+        tx_validation_actor: Option<&Addr<IncomingTxHandler>>,
     ) -> Result<NetworkClientResponses, Error> {
         let head = self.chain.head()?;
         let me = self.validator_signer.as_ref().map(|vs| vs.validator_id());
@@ -1374,6 +1390,27 @@ impl Client {
         } else {
             None
         };
+
+        // If there is an external actor to do transaction validation,
+        // offload the work onto that actor.
+        if let Some(tx_validator) = tx_validation_actor {
+            let msg = IncomingTx::new(
+                tx.clone(),
+                is_forwarded,
+                check_only,
+                gas_price,
+                shard_id,
+                head,
+                maybe_state_root,
+                self.config.epoch_length,
+                me.cloned(),
+                cares_about_shard,
+            );
+            tx_validator.do_send(msg);
+
+            return Ok(NetworkClientResponses::NoResponse);
+        }
+
         let response = Self::validate_and_forward_tx(
             tx,
             is_forwarded,
@@ -1395,17 +1432,31 @@ impl Client {
         }
 
         if !check_only && maybe_state_root.is_some() {
-            debug!(
-                target: "client",
-                "Recording a transaction. I'm {:?}, {} is_forwarded: {}",
-                me,
-                shard_id,
-                is_forwarded
-            );
-            self.shards_mgr.insert_transaction(shard_id, tx.clone());
+            // Need to clone here otherwise the borrow checker gets upset
+            // because `me` is an immutable borrow of `self` and I'm about to
+            // make a mutable borrow of `self`.
+            let me = me.cloned();
+            self.insert_transaction(tx.clone(), shard_id, me, is_forwarded);
         }
 
         Ok(response)
+    }
+
+    pub fn insert_transaction(
+        &mut self,
+        tx: SignedTransaction,
+        shard_id: ShardId,
+        me: Option<AccountId>,
+        is_forwarded: bool,
+    ) {
+        debug!(
+            target: "client",
+            "Recording a transaction. I'm {:?}, {} is_forwarded: {}",
+            me,
+            shard_id,
+            is_forwarded
+        );
+        self.shards_mgr.insert_transaction(shard_id, tx.clone());
     }
 
     /// Determine if I am a validator in next few blocks for specified shard, assuming epoch doesn't change.

@@ -45,6 +45,7 @@ use near_store::ColBlock;
 use near_telemetry::TelemetryActor;
 
 use crate::client::Client;
+use crate::incoming_tx_handler::{IncomingTxHandler, SetIncomingTxHandler, TxForMemPool};
 use crate::info::{InfoHelper, ValidatorInfoHelper};
 use crate::sync::{highest_height_peer, StateSync, StateSyncResult};
 use crate::types::{
@@ -85,6 +86,9 @@ pub struct ClientActor {
     doomslug_timer_next_attempt: DateTime<Utc>,
     chunk_request_retry_next_attempt: DateTime<Utc>,
     sync_started: bool,
+
+    /// Separate actor for transaction validation (to keep the main thread clear)
+    tx_validation_actor: Option<Addr<IncomingTxHandler>>,
 }
 
 /// Blocks the program until given genesis time arrives.
@@ -158,6 +162,7 @@ impl ClientActor {
             doomslug_timer_next_attempt: now,
             chunk_request_retry_next_attempt: now,
             sync_started: false,
+            tx_validation_actor: None,
         })
     }
 }
@@ -288,7 +293,15 @@ impl Handler<NetworkClientMessages> for ClientActor {
                 };
             }
             NetworkClientMessages::Transaction { transaction, is_forwarded, check_only } => {
-                self.client.process_tx(transaction, is_forwarded, check_only)
+                match &self.tx_validation_actor {
+                    None => self.client.process_tx(transaction, is_forwarded, check_only),
+                    Some(validation_actor) => self.client.process_tx_with_actor(
+                        transaction,
+                        is_forwarded,
+                        check_only,
+                        validation_actor,
+                    ),
+                }
             }
             NetworkClientMessages::Block(block, peer_id, was_requested) => {
                 let blocks_at_height = self
@@ -595,6 +608,23 @@ impl Handler<GetNetworkInfo> for ClientActor {
             #[cfg(feature = "metric_recorder")]
             metric_recorder: self.network_info.metric_recorder.clone(),
         })
+    }
+}
+
+impl Handler<TxForMemPool> for ClientActor {
+    type Result = ();
+
+    fn handle(&mut self, msg: TxForMemPool, _ctx: &mut Context<Self>) -> Self::Result {
+        let TxForMemPool(tx, shard_id, me, is_forwarded) = msg;
+        self.client.insert_transaction(tx, shard_id, me, is_forwarded);
+    }
+}
+
+impl Handler<SetIncomingTxHandler> for ClientActor {
+    type Result = ();
+
+    fn handle(&mut self, msg: SetIncomingTxHandler, _ctx: &mut Context<Self>) -> Self::Result {
+        self.tx_validation_actor = Some(msg.0);
     }
 }
 
