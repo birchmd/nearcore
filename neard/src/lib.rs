@@ -176,7 +176,7 @@ pub fn start_with_config(
     );
     let (client_actor, client_arbiter) = start_client(
         config.client_config,
-        chain_genesis,
+        chain_genesis.clone(),
         runtime.clone(),
         node_id,
         network_adapter.clone(),
@@ -185,8 +185,12 @@ pub fn start_with_config(
         #[cfg(feature = "adversarial")]
         adv.clone(),
     );
-    let tx_validation_actor =
-        IncomingTxHandler::start(2, runtime, network_adapter.clone(), client_actor.clone());
+    let (tx_validation_actor, tx_arbiter) = IncomingTxHandler::start(
+        runtime,
+        network_adapter.clone(),
+        client_actor.clone(),
+        chain_genesis.clone(),
+    );
     client_actor.do_send(SetIncomingTxHandler(tx_validation_actor));
     start_http(
         config.rpc_config,
@@ -211,5 +215,5 @@ pub fn start_with_config(
 
     trace!(target: "diagnostic", key="log", "Starting NEAR node with diagnostic activated");
 
-    (client_actor, view_client, vec![client_arbiter, arbiter])
+    (client_actor, view_client, vec![client_arbiter, arbiter, tx_arbiter])
 }

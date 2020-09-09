@@ -39,7 +39,7 @@ use near_primitives::unwrap_or_return;
 use near_primitives::utils::to_timestamp;
 use near_primitives::validator_signer::ValidatorSigner;
 
-use crate::incoming_tx_handler::{IncomingTx, IncomingTxHandler};
+use crate::incoming_tx_handler::{IncomingTx, IncomingTxHandler, UnvalidatedTx};
 use crate::metrics;
 use crate::sync::{BlockSync, HeaderSync, StateSync, StateSyncResult};
 use crate::types::{Error, ShardSyncDownload};
@@ -1182,9 +1182,10 @@ impl Client {
         is_forwarded: bool,
         check_only: bool,
     ) -> NetworkClientResponses {
-        unwrap_or_return!(self.process_tx_internal(&tx, is_forwarded, check_only, None), {
+        let tx_hash = tx.get_hash();
+        unwrap_or_return!(self.process_tx_internal(tx, is_forwarded, check_only, None), {
             let me = self.validator_signer.as_ref().map(|vs| vs.validator_id());
-            warn!(target: "client", "I'm: {:?} Dropping tx: {:?}", me, tx);
+            warn!(target: "client", "I'm: {:?} Dropping tx: {:?}", me, tx_hash);
             NetworkClientResponses::NoResponse
         })
     }
@@ -1196,10 +1197,11 @@ impl Client {
         check_only: bool,
         tx_validation_actor: &Addr<IncomingTxHandler>,
     ) -> NetworkClientResponses {
-        unwrap_or_return!(
-            self.process_tx_internal(&tx, is_forwarded, check_only, Some(tx_validation_actor)),
+        let result = unwrap_or_return!(
+            self.process_tx_internal(tx, is_forwarded, check_only, Some(tx_validation_actor)),
             NetworkClientResponses::NoResponse
-        )
+        );
+        result
     }
 
     /// If we are close to epoch boundary, return next epoch id, otherwise return None.
@@ -1349,41 +1351,36 @@ impl Client {
         }
     }
 
-    /// Process transaction and either add it to the mempool or return to redirect to another validator.
-    fn process_tx_internal(
-        &mut self,
-        tx: &SignedTransaction,
+    pub fn prep_incoming_tx(
+        tx: SignedTransaction,
         is_forwarded: bool,
         check_only: bool,
-        tx_validation_actor: Option<&Addr<IncomingTxHandler>>,
-    ) -> Result<NetworkClientResponses, Error> {
-        let head = self.chain.head()?;
-        let me = self.validator_signer.as_ref().map(|vs| vs.validator_id());
-        let shard_id = self.runtime_adapter.account_id_to_shard_id(&tx.transaction.signer_id);
-        let cur_block_header = self.chain.head_header()?.clone();
-        let transaction_validity_period = self.chain.transaction_validity_period;
+        me: Option<&String>,
+        chain: &mut Chain,
+        runtime_adapter: &Arc<dyn RuntimeAdapter>,
+        epoch_length: BlockHeightDelta,
+    ) -> Result<Result<IncomingTx, NetworkClientResponses>, Error> {
+        let head = chain.head()?;
+        let shard_id = runtime_adapter.account_id_to_shard_id(&tx.transaction.signer_id);
+        let cur_block_header = chain.head_header()?.clone();
+        let transaction_validity_period = chain.transaction_validity_period;
         // here it is fine to use `cur_block_header` as it is a best effort estimate. If the transaction
         // were to be included, the block that the chunk points to will have height >= height of
         // `cur_block_header`.
-        if let Err(e) = self.chain.mut_store().check_transaction_validity_period(
+        if let Err(e) = chain.mut_store().check_transaction_validity_period(
             &cur_block_header,
             &tx.transaction.block_hash,
             transaction_validity_period,
         ) {
             debug!(target: "client", "Invalid tx: expired or from a different fork -- {:?}", tx);
-            return Ok(NetworkClientResponses::InvalidTx(e));
+            return Ok(Err(NetworkClientResponses::InvalidTx(e)));
         }
         let gas_price = cur_block_header.gas_price();
         let cares_about_shard =
-            self.runtime_adapter.cares_about_shard(me, &head.last_block_hash, shard_id, true)
-                || self.runtime_adapter.will_care_about_shard(
-                    me,
-                    &head.last_block_hash,
-                    shard_id,
-                    true,
-                );
+            runtime_adapter.cares_about_shard(me, &head.last_block_hash, shard_id, true)
+                || runtime_adapter.will_care_about_shard(me, &head.last_block_hash, shard_id, true);
         let maybe_state_root = if cares_about_shard {
-            self.chain
+            chain
                 .get_chunk_extra(&head.last_block_hash, shard_id)
                 .ok()
                 .map(|chunk_extra| chunk_extra.state_root)
@@ -1391,39 +1388,71 @@ impl Client {
             None
         };
 
+        Ok(Ok(IncomingTx::new(
+            tx,
+            is_forwarded,
+            check_only,
+            gas_price,
+            shard_id,
+            head,
+            maybe_state_root,
+            epoch_length,
+            me.cloned(),
+            cares_about_shard,
+        )))
+    }
+
+    /// Process transaction and either add it to the mempool or return to redirect to another validator.
+    fn process_tx_internal(
+        &mut self,
+        tx: SignedTransaction,
+        is_forwarded: bool,
+        check_only: bool,
+        tx_validation_actor: Option<&Addr<IncomingTxHandler>>,
+    ) -> Result<NetworkClientResponses, Error> {
+        let me = self.validator_signer.as_ref().map(|vs| vs.validator_id());
+        let epoch_length = self.config.epoch_length;
+        let runtime_adapter = &self.runtime_adapter;
+
         // If there is an external actor to do transaction validation,
         // offload the work onto that actor.
         if let Some(tx_validator) = tx_validation_actor {
-            let msg = IncomingTx::new(
-                tx.clone(),
-                is_forwarded,
-                check_only,
-                gas_price,
-                shard_id,
-                head,
-                maybe_state_root,
-                self.config.epoch_length,
-                me.cloned(),
-                cares_about_shard,
-            );
-            tx_validator.do_send(msg);
+            let msg = UnvalidatedTx::new(tx, is_forwarded, check_only, epoch_length, me.cloned());
+            // We purposely use `try_send` here so that we don't create too much
+            // of a backlog in the tx validation actor.
+            tx_validator.try_send(msg).ok();
 
             return Ok(NetworkClientResponses::NoResponse);
         }
 
-        let response = Self::validate_and_forward_tx(
+        let incoming_tx = match Self::prep_incoming_tx(
             tx,
+            is_forwarded,
+            check_only,
+            me,
+            &mut self.chain,
+            runtime_adapter,
+            epoch_length,
+        )? {
+            Ok(incoming_tx) => incoming_tx,
+            Err(response) => {
+                return Ok(response);
+            }
+        };
+
+        let response = Self::validate_and_forward_tx(
+            &incoming_tx.tx,
             is_forwarded,
             check_only,
             &self.runtime_adapter,
             &self.network_adapter,
-            gas_price,
-            shard_id,
-            &head,
-            maybe_state_root,
-            self.config.epoch_length,
+            incoming_tx.gas_price,
+            incoming_tx.shard_id,
+            &incoming_tx.head,
+            incoming_tx.maybe_state_root,
+            epoch_length,
             me,
-            cares_about_shard,
+            incoming_tx.cares_about_shard,
         )?;
 
         // Do not store invalid transactions
@@ -1431,12 +1460,12 @@ impl Client {
             return Ok(response);
         }
 
-        if !check_only && maybe_state_root.is_some() {
+        if !check_only && incoming_tx.maybe_state_root.is_some() {
             // Need to clone here otherwise the borrow checker gets upset
             // because `me` is an immutable borrow of `self` and I'm about to
             // make a mutable borrow of `self`.
             let me = me.cloned();
-            self.insert_transaction(tx.clone(), shard_id, me, is_forwarded);
+            self.insert_transaction(incoming_tx.tx, incoming_tx.shard_id, me, is_forwarded);
         }
 
         Ok(response)
