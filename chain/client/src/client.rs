@@ -39,12 +39,14 @@ use near_primitives::unwrap_or_return;
 use near_primitives::utils::to_timestamp;
 use near_primitives::validator_signer::ValidatorSigner;
 
-use crate::incoming_tx_handler::{IncomingTx, IncomingTxHandler, UnvalidatedTx};
+use crate::incoming_tx_handler::{IncomingTx, IncomingTxHandler};
 use crate::metrics;
 use crate::sync::{BlockSync, HeaderSync, StateSync, StateSyncResult};
 use crate::types::{Error, ShardSyncDownload};
 use crate::SyncStatus;
 use actix::Addr;
+use near_network::types::UnvalidatedTx;
+use near_pool::SharedTxPool;
 
 const NUM_REBROADCAST_BLOCKS: usize = 30;
 
@@ -95,6 +97,7 @@ impl Client {
         network_adapter: Arc<dyn NetworkAdapter>,
         validator_signer: Option<Arc<dyn ValidatorSigner>>,
         enable_doomslug: bool,
+        tx_pools: HashMap<ShardId, SharedTxPool>,
     ) -> Result<Self, Error> {
         let doomslug_threshold_mode = if enable_doomslug {
             DoomslugThresholdMode::TwoThirds
@@ -106,6 +109,7 @@ impl Client {
             validator_signer.as_ref().map(|x| x.validator_id().clone()),
             runtime_adapter.clone(),
             network_adapter.clone(),
+            tx_pools,
         );
         let sync_status = SyncStatus::AwaitingPeers;
         let header_sync = HeaderSync::new(
@@ -563,7 +567,9 @@ impl Client {
         prev_block_header: &BlockHeader,
     ) -> Vec<SignedTransaction> {
         let Self { chain, shards_mgr, runtime_adapter, .. } = self;
-        let transactions = if let Some(mut iter) = shards_mgr.get_pool_iterator(shard_id) {
+        let transactions = if let Some(lock) = shards_mgr.get_pool(&shard_id) {
+            let mut pool = lock.write();
+            let mut iter = pool.pool_iterator();
             let transaction_validity_period = chain.transaction_validity_period;
             runtime_adapter
                 .prepare_transactions(
@@ -1410,14 +1416,10 @@ impl Client {
         check_only: bool,
         tx_validation_actor: Option<&Addr<IncomingTxHandler>>,
     ) -> Result<NetworkClientResponses, Error> {
-        let me = self.validator_signer.as_ref().map(|vs| vs.validator_id());
-        let epoch_length = self.config.epoch_length;
-        let runtime_adapter = &self.runtime_adapter;
-
         // If there is an external actor to do transaction validation,
         // offload the work onto that actor.
         if let Some(tx_validator) = tx_validation_actor {
-            let msg = UnvalidatedTx::new(tx, is_forwarded, check_only, epoch_length, me.cloned());
+            let msg = UnvalidatedTx::new(tx, is_forwarded, check_only);
             // We purposely use `try_send` here so that we don't create too much
             // of a backlog in the tx validation actor.
             tx_validator.try_send(msg).ok();
@@ -1425,14 +1427,16 @@ impl Client {
             return Ok(NetworkClientResponses::NoResponse);
         }
 
+        let me = self.validator_signer.as_ref().map(|vs| vs.validator_id());
+
         let incoming_tx = match Self::prep_incoming_tx(
             tx,
             is_forwarded,
             check_only,
             me,
             &mut self.chain,
-            runtime_adapter,
-            epoch_length,
+            &self.runtime_adapter,
+            self.config.epoch_length,
         )? {
             Ok(incoming_tx) => incoming_tx,
             Err(response) => {
@@ -1450,7 +1454,7 @@ impl Client {
             incoming_tx.shard_id,
             &incoming_tx.head,
             incoming_tx.maybe_state_root,
-            epoch_length,
+            incoming_tx.epoch_length,
             me,
             incoming_tx.cares_about_shard,
         )?;

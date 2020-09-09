@@ -6,8 +6,10 @@ use near_crypto::PublicKey;
 use near_primitives::hash::{hash, CryptoHash};
 use near_primitives::transaction::SignedTransaction;
 use near_primitives::types::AccountId;
+use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use rand::RngCore;
 use std::ops::Bound;
+use std::sync::Arc;
 
 pub mod types;
 
@@ -105,6 +107,27 @@ impl TransactionPool {
 
     pub fn is_empty(&self) -> bool {
         self.unique_transactions.is_empty()
+    }
+}
+
+#[derive(Clone)]
+pub struct SharedTxPool(Arc<RwLock<TransactionPool>>);
+
+impl SharedTxPool {
+    pub fn new() -> Self {
+        let pool = TransactionPool::new();
+        let lock = RwLock::new(pool);
+        let arc = Arc::new(lock);
+
+        return Self(arc);
+    }
+
+    pub fn read(&self) -> RwLockReadGuard<TransactionPool> {
+        self.0.read()
+    }
+
+    pub fn write(&self) -> RwLockWriteGuard<TransactionPool> {
+        self.0.write()
     }
 }
 

@@ -22,6 +22,7 @@ use near_store::Store;
 use crate::{
     Seal, SealsManager, ShardsManager, ACCEPTING_SEAL_PERIOD_MS, PAST_SEAL_HEIGHT_HORIZON,
 };
+use std::collections::HashMap;
 
 pub struct SealsManagerTestFixture {
     pub mock_chunk_producer: AccountId,
@@ -204,6 +205,7 @@ impl Default for ChunkForwardingTestFixture {
             Some(mock_chunk_producer.clone()),
             mock_runtime.clone(),
             mock_network.clone(),
+            HashMap::new(),
         );
         let receipts = Vec::new();
         let receipts_hashes = mock_runtime.build_receipts_hashes(&receipts);

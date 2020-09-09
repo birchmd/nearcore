@@ -29,7 +29,7 @@ use crate::types::{
     NetworkViewClientResponses, PeerChainInfo, PeerInfo, PeerManagerRequest, PeerMessage,
     PeerRequest, PeerResponse, PeerStatsResult, PeerStatus, PeerType, PeersRequest, PeersResponse,
     QueryPeerStats, ReasonForBan, RoutedMessageBody, RoutedMessageFrom, SendMessage, Unregister,
-    UPDATE_INTERVAL_LAST_TIME_RECEIVED_MESSAGE,
+    UnvalidatedTx, UPDATE_INTERVAL_LAST_TIME_RECEIVED_MESSAGE,
 };
 use crate::PeerManagerActor;
 use crate::{metrics, NetworkResponses};
@@ -149,6 +149,8 @@ pub struct Peer {
     client_addr: Recipient<NetworkClientMessages>,
     /// Addr for view client to send messages related to the chain.
     view_client_addr: Recipient<NetworkViewClientMessages>,
+    /// Recipient to send transactions to (if available)
+    incoming_tx_handler: Option<Recipient<UnvalidatedTx>>,
     /// Tracker for requests and responses.
     tracker: Tracker,
     /// This node genesis id.
@@ -174,6 +176,7 @@ impl Peer {
         peer_manager_addr: Addr<PeerManagerActor>,
         client_addr: Recipient<NetworkClientMessages>,
         view_client_addr: Recipient<NetworkViewClientMessages>,
+        incoming_tx_handler: Option<Recipient<UnvalidatedTx>>,
         edge_info: Option<EdgeInfo>,
         network_metrics: NetworkMetrics,
     ) -> Self {
@@ -188,6 +191,7 @@ impl Peer {
             peer_manager_addr,
             client_addr,
             view_client_addr,
+            incoming_tx_handler,
             tracker: Default::default(),
             genesis_id: Default::default(),
             chain_info: Default::default(),
@@ -428,6 +432,10 @@ impl Peer {
             }
             PeerMessage::Transaction(transaction) => {
                 near_metrics::inc_counter(&metrics::PEER_TRANSACTION_RECEIVED_TOTAL);
+                if let Some(handler) = &self.incoming_tx_handler {
+                    handler.do_send(UnvalidatedTx::new(transaction, false, false)).unwrap();
+                    return;
+                }
                 NetworkClientMessages::Transaction {
                     transaction,
                     is_forwarded: false,
@@ -446,6 +454,10 @@ impl Peer {
                         NetworkClientMessages::BlockApproval(approval, peer_id)
                     }
                     RoutedMessageBody::ForwardTx(transaction) => {
+                        if let Some(handler) = &self.incoming_tx_handler {
+                            handler.do_send(UnvalidatedTx::new(transaction, false, false)).unwrap();
+                            return;
+                        }
                         NetworkClientMessages::Transaction {
                             transaction,
                             is_forwarded: true,

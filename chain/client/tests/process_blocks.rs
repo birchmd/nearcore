@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::convert::TryFrom;
 use std::iter::FromIterator;
 use std::path::Path;
@@ -1663,6 +1663,7 @@ fn test_incorrect_validator_key_produce_block() {
         Arc::new(MockNetworkAdapter::default()),
         Some(signer),
         false,
+        HashMap::new(),
     )
     .unwrap();
     let res = client.produce_block(1);

@@ -34,7 +34,7 @@ use near_network::{
 };
 use near_primitives::hash::CryptoHash;
 use near_primitives::network::{AnnounceAccount, PeerId};
-use near_primitives::types::{BlockHeight, EpochId};
+use near_primitives::types::{BlockHeight, EpochId, ShardId};
 use near_primitives::unwrap_or_return;
 use near_primitives::utils::from_timestamp;
 use near_primitives::validator_signer::ValidatorSigner;
@@ -45,7 +45,7 @@ use near_store::ColBlock;
 use near_telemetry::TelemetryActor;
 
 use crate::client::Client;
-use crate::incoming_tx_handler::{IncomingTxHandler, SetIncomingTxHandler, TxForMemPool};
+use crate::incoming_tx_handler::{IncomingTxHandler, SetIncomingTxHandler};
 use crate::info::{InfoHelper, ValidatorInfoHelper};
 use crate::sync::{highest_height_peer, StateSync, StateSyncResult};
 use crate::types::{
@@ -55,6 +55,7 @@ use crate::types::{
 #[cfg(feature = "adversarial")]
 use crate::AdversarialControls;
 use crate::StatusResponse;
+use near_pool::SharedTxPool;
 
 /// Multiplier on `max_block_time` to wait until deciding that chain stalled.
 const STATUS_WAIT_TIME_MULTIPLIER: u64 = 10;
@@ -121,6 +122,7 @@ impl ClientActor {
         validator_signer: Option<Arc<dyn ValidatorSigner>>,
         telemetry_actor: Addr<TelemetryActor>,
         enable_doomslug: bool,
+        tx_pools: HashMap<ShardId, SharedTxPool>,
         #[cfg(feature = "adversarial")] adv: Arc<RwLock<AdversarialControls>>,
     ) -> Result<Self, Error> {
         wait_until_genesis(&chain_genesis.time);
@@ -135,6 +137,7 @@ impl ClientActor {
             network_adapter.clone(),
             validator_signer,
             enable_doomslug,
+            tx_pools,
         )?;
 
         let now = Utc::now();
@@ -608,15 +611,6 @@ impl Handler<GetNetworkInfo> for ClientActor {
             #[cfg(feature = "metric_recorder")]
             metric_recorder: self.network_info.metric_recorder.clone(),
         })
-    }
-}
-
-impl Handler<TxForMemPool> for ClientActor {
-    type Result = ();
-
-    fn handle(&mut self, msg: TxForMemPool, _ctx: &mut Context<Self>) -> Self::Result {
-        let TxForMemPool(tx, shard_id, me, is_forwarded) = msg;
-        self.client.insert_transaction(tx, shard_id, me, is_forwarded);
     }
 }
 
@@ -1366,6 +1360,7 @@ pub fn start_client(
     network_adapter: Arc<dyn NetworkAdapter>,
     validator_signer: Option<Arc<dyn ValidatorSigner>>,
     telemetry_actor: Addr<TelemetryActor>,
+    tx_pools: HashMap<ShardId, SharedTxPool>,
     #[cfg(feature = "adversarial")] adv: Arc<RwLock<AdversarialControls>>,
 ) -> (Addr<ClientActor>, Arbiter) {
     let client_arbiter = Arbiter::current();
@@ -1379,6 +1374,7 @@ pub fn start_client(
             validator_signer,
             telemetry_actor,
             true,
+            tx_pools,
             #[cfg(feature = "adversarial")]
             adv,
         )

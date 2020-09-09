@@ -57,6 +57,7 @@ pub fn start_all_with_validity_period(
         Arc::new(genesis),
         client_addr.clone(),
         view_client_addr.clone(),
+        None,
     );
     (view_client_addr, addr)
 }

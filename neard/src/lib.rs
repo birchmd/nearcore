@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 use std::sync::Arc;
@@ -6,7 +7,7 @@ use actix::{Actor, Addr, Arbiter};
 use log::{error, info};
 use tracing::trace;
 
-use near_chain::ChainGenesis;
+use near_chain::{ChainGenesis, RuntimeAdapter};
 #[cfg(feature = "adversarial")]
 use near_client::AdversarialControls;
 use near_client::{
@@ -24,6 +25,7 @@ use near_telemetry::TelemetryActor;
 
 pub use crate::config::{init_configs, load_config, load_test_config, NearConfig, NEAR_BASE};
 pub use crate::runtime::NightshadeRuntime;
+use near_pool::SharedTxPool;
 
 pub mod config;
 pub mod genesis_validate;
@@ -165,8 +167,9 @@ pub fn start_with_config(
     #[cfg(feature = "adversarial")]
     let adv = Arc::new(std::sync::RwLock::new(AdversarialControls::default()));
 
+    let me = config.validator_signer.as_ref().map(|signer| signer.validator_id()).cloned();
     let view_client = start_view_client(
-        config.validator_signer.as_ref().map(|signer| signer.validator_id().clone()),
+        me.clone(),
         chain_genesis.clone(),
         runtime.clone(),
         network_adapter.clone(),
@@ -174,6 +177,9 @@ pub fn start_with_config(
         #[cfg(feature = "adversarial")]
         adv.clone(),
     );
+    let tx_pools: HashMap<_, _> =
+        (0..runtime.num_shards()).map(|i| (i, SharedTxPool::new())).collect();
+    let epoch_length = config.client_config.epoch_length;
     let (client_actor, client_arbiter) = start_client(
         config.client_config,
         chain_genesis.clone(),
@@ -182,21 +188,25 @@ pub fn start_with_config(
         network_adapter.clone(),
         config.validator_signer,
         telemetry,
+        tx_pools.clone(),
         #[cfg(feature = "adversarial")]
         adv.clone(),
     );
     let (tx_validation_actor, tx_arbiter) = IncomingTxHandler::start(
         runtime,
         network_adapter.clone(),
-        client_actor.clone(),
+        tx_pools,
         chain_genesis.clone(),
+        epoch_length,
+        me,
     );
-    client_actor.do_send(SetIncomingTxHandler(tx_validation_actor));
+    client_actor.do_send(SetIncomingTxHandler(tx_validation_actor.clone()));
     start_http(
         config.rpc_config,
         Arc::clone(&config.genesis),
         client_actor.clone(),
         view_client.clone(),
+        Some(tx_validation_actor.clone()),
     );
 
     config.network_config.verify();
@@ -208,7 +218,14 @@ pub fn start_with_config(
     let network_config = config.network_config;
 
     let network_actor = PeerManagerActor::start_in_arbiter(&arbiter, move |_ctx| {
-        PeerManagerActor::new(store, network_config, client_actor1, view_client1).unwrap()
+        PeerManagerActor::new(
+            store,
+            network_config,
+            client_actor1,
+            view_client1,
+            Some(tx_validation_actor.recipient()),
+        )
+        .unwrap()
     });
 
     network_adapter.set_recipient(network_actor.recipient());

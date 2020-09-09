@@ -39,8 +39,14 @@ fn make_peer_manager(seed: &str, port: u16, boot_nodes: Vec<(&str, u16)>) -> Pee
         }
     }))
     .start();
-    PeerManagerActor::new(store, config, client_addr.recipient(), view_client_addr.recipient())
-        .unwrap()
+    PeerManagerActor::new(
+        store,
+        config,
+        client_addr.recipient(),
+        view_client_addr.recipient(),
+        None,
+    )
+    .unwrap()
 }
 
 /// This test spawns several (7) nodes but node 0 crash very frequently and restart.

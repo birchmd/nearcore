@@ -13,6 +13,7 @@ pub use crate::types::{
 #[cfg(feature = "adversarial")]
 pub use crate::view_client::AdversarialControls;
 pub use crate::view_client::{start_view_client, ViewClientActor};
+pub use near_network::types::UnvalidatedTx;
 
 mod client;
 mod client_actor;

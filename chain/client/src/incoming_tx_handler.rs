@@ -1,34 +1,14 @@
-use crate::{Client, ClientActor};
+use crate::Client;
 use actix::{Actor, Addr, Arbiter, Context, Handler, Message};
 use log::error;
 use near_chain::{Chain, ChainGenesis, DoomslugThresholdMode, RuntimeAdapter};
-use near_network::{NetworkAdapter, NetworkClientResponses};
+use near_network::{types::UnvalidatedTx, NetworkAdapter, NetworkClientResponses};
+use near_pool::SharedTxPool;
 use near_primitives::block::Tip;
 use near_primitives::transaction::SignedTransaction;
-use near_primitives::types::{AccountId, BlockHeightDelta, ShardId, StateRoot};
+use near_primitives::types::{BlockHeightDelta, ShardId, StateRoot};
+use std::collections::HashMap;
 use std::sync::Arc;
-
-pub struct UnvalidatedTx {
-    tx: SignedTransaction,
-    is_forwarded: bool,
-    check_only: bool,
-    epoch_length: BlockHeightDelta,
-    validator_signer: Option<String>,
-}
-impl UnvalidatedTx {
-    pub fn new(
-        tx: SignedTransaction,
-        is_forwarded: bool,
-        check_only: bool,
-        epoch_length: BlockHeightDelta,
-        validator_signer: Option<String>,
-    ) -> Self {
-        Self { tx, is_forwarded, check_only, epoch_length, validator_signer }
-    }
-}
-impl Message for UnvalidatedTx {
-    type Result = NetworkClientResponses;
-}
 
 pub struct IncomingTx {
     pub tx: SignedTransaction,
@@ -71,41 +51,48 @@ impl IncomingTx {
     }
 }
 
-pub struct TxForMemPool(pub SignedTransaction, pub ShardId, pub Option<AccountId>, pub bool);
-
-impl Message for TxForMemPool {
-    type Result = ();
-}
-
 pub struct IncomingTxHandler {
     network_adapter: Arc<dyn NetworkAdapter>,
     runtime_adapter: Arc<dyn RuntimeAdapter>,
-    client_actor: Addr<ClientActor>,
+    tx_pools: HashMap<ShardId, SharedTxPool>,
     chain: Chain,
+    epoch_length: BlockHeightDelta,
+    validator_signer: Option<String>,
 }
 
 impl IncomingTxHandler {
     pub fn new(
         runtime_adapter: Arc<dyn RuntimeAdapter>,
         network_adapter: Arc<dyn NetworkAdapter>,
-        client_actor: Addr<ClientActor>,
+        tx_pools: HashMap<ShardId, SharedTxPool>,
         chain_genesis: ChainGenesis,
+        epoch_length: BlockHeightDelta,
+        validator_signer: Option<String>,
     ) -> Self {
         let chain =
             Chain::new(runtime_adapter.clone(), &chain_genesis, DoomslugThresholdMode::TwoThirds)
                 .unwrap();
-        Self { network_adapter, runtime_adapter, client_actor, chain }
+        Self { network_adapter, runtime_adapter, tx_pools, chain, epoch_length, validator_signer }
     }
 
     pub fn start(
         runtime_adapter: Arc<dyn RuntimeAdapter>,
         network_adapter: Arc<dyn NetworkAdapter>,
-        client_actor: Addr<ClientActor>,
+        tx_pools: HashMap<ShardId, SharedTxPool>,
         chain_genesis: ChainGenesis,
+        epoch_length: BlockHeightDelta,
+        validator_signer: Option<String>,
     ) -> (Addr<Self>, Arbiter) {
         let arbiter = Arbiter::new();
-        let addr = Self::start_in_arbiter(&arbiter, |_ctx| {
-            Self::new(runtime_adapter, network_adapter, client_actor, chain_genesis)
+        let addr = Self::start_in_arbiter(&arbiter, move |_ctx| {
+            Self::new(
+                runtime_adapter,
+                network_adapter,
+                tx_pools,
+                chain_genesis,
+                epoch_length,
+                validator_signer,
+            )
         });
         (addr, arbiter)
     }
@@ -123,10 +110,10 @@ impl Handler<UnvalidatedTx> for IncomingTxHandler {
             msg.tx,
             msg.is_forwarded,
             msg.check_only,
-            msg.validator_signer.as_ref(),
+            self.validator_signer.as_ref(),
             &mut self.chain,
             &self.runtime_adapter,
-            msg.epoch_length,
+            self.epoch_length,
         ) {
             Ok(Ok(incoming_tx)) => incoming_tx,
             Ok(Err(response)) => {
@@ -159,12 +146,10 @@ impl Handler<UnvalidatedTx> for IncomingTxHandler {
             }
             Ok(response) => {
                 if !msg.check_only && msg.maybe_state_root.is_some() {
-                    self.client_actor.do_send(TxForMemPool(
-                        msg.tx,
-                        msg.shard_id,
-                        msg.validator_signer,
-                        msg.is_forwarded,
-                    ));
+                    if let Some(lock) = self.tx_pools.get(&msg.shard_id) {
+                        let mut pool = lock.write();
+                        pool.insert_transaction(msg.tx);
+                    }
                 }
                 response
             }

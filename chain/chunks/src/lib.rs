@@ -17,7 +17,7 @@ use near_network::types::{
     NetworkAdapter, PartialEncodedChunkRequestMsg, PartialEncodedChunkResponseMsg,
 };
 use near_network::NetworkRequests;
-use near_pool::{PoolIteratorWrapper, TransactionPool};
+use near_pool::SharedTxPool;
 use near_primitives::block::BlockHeader;
 use near_primitives::hash::{hash, CryptoHash};
 use near_primitives::merkle::{merklize, verify_path, MerklePath};
@@ -370,7 +370,7 @@ impl SealsManager {
 pub struct ShardsManager {
     me: Option<AccountId>,
 
-    tx_pools: HashMap<ShardId, TransactionPool>,
+    tx_pools: HashMap<ShardId, SharedTxPool>,
 
     runtime_adapter: Arc<dyn RuntimeAdapter>,
     network_adapter: Arc<dyn NetworkAdapter>,
@@ -387,10 +387,11 @@ impl ShardsManager {
         me: Option<AccountId>,
         runtime_adapter: Arc<dyn RuntimeAdapter>,
         network_adapter: Arc<dyn NetworkAdapter>,
+        tx_pools: HashMap<ShardId, SharedTxPool>,
     ) -> Self {
         Self {
             me: me.clone(),
-            tx_pools: HashMap::new(),
+            tx_pools,
             runtime_adapter: runtime_adapter.clone(),
             network_adapter,
             encoded_chunks: EncodedChunksCache::new(),
@@ -412,8 +413,8 @@ impl ShardsManager {
         );
     }
 
-    pub fn get_pool_iterator(&mut self, shard_id: ShardId) -> Option<PoolIteratorWrapper<'_>> {
-        self.tx_pools.get_mut(&shard_id).map(|pool| pool.pool_iterator())
+    pub fn get_pool(&self, shard_id: &ShardId) -> Option<SharedTxPool> {
+        self.tx_pools.get(shard_id).cloned()
     }
 
     pub fn cares_about_shard_this_or_next_epoch(
@@ -709,16 +710,16 @@ impl ShardsManager {
 
     /// Returns true if transaction is not in the pool before call
     pub fn insert_transaction(&mut self, shard_id: ShardId, tx: SignedTransaction) -> bool {
-        self.tx_pools.entry(shard_id).or_insert_with(TransactionPool::new).insert_transaction(tx)
+        self.tx_pools
+            .entry(shard_id)
+            .or_insert_with(SharedTxPool::new)
+            .write()
+            .insert_transaction(tx)
     }
 
-    pub fn remove_transactions(
-        &mut self,
-        shard_id: ShardId,
-        transactions: &Vec<SignedTransaction>,
-    ) {
-        if let Some(pool) = self.tx_pools.get_mut(&shard_id) {
-            pool.remove_transactions(transactions)
+    pub fn remove_transactions(&self, shard_id: ShardId, transactions: &Vec<SignedTransaction>) {
+        if let Some(pool) = self.tx_pools.get(&shard_id) {
+            pool.write().remove_transactions(transactions)
         }
     }
 
@@ -729,7 +730,8 @@ impl ShardsManager {
     ) {
         self.tx_pools
             .entry(shard_id)
-            .or_insert_with(TransactionPool::new)
+            .or_insert_with(SharedTxPool::new)
+            .write()
             .reintroduce_transactions(transactions.clone());
     }
 
@@ -1467,6 +1469,7 @@ mod test {
     use near_primitives::hash::hash;
     use near_primitives::sharding::ChunkHash;
     use near_store::test_utils::create_test_store;
+    use std::collections::HashMap;
     use std::sync::Arc;
     use std::time::{Duration, Instant};
 
@@ -1484,8 +1487,12 @@ mod test {
     fn test_request_partial_encoded_chunk_from_self() {
         let runtime_adapter = Arc::new(KeyValueRuntime::new(create_test_store()));
         let network_adapter = Arc::new(MockNetworkAdapter::default());
-        let mut shards_manager =
-            ShardsManager::new(Some("test".to_string()), runtime_adapter, network_adapter.clone());
+        let mut shards_manager = ShardsManager::new(
+            Some("test".to_string()),
+            runtime_adapter,
+            network_adapter.clone(),
+            HashMap::new(),
+        );
         shards_manager.requested_partial_encoded_chunks.insert(
             ChunkHash(hash(&[1])),
             ChunkRequestInfo {
@@ -1523,6 +1530,7 @@ mod test {
             Some("test".to_string()),
             runtime_adapter.clone(),
             network_adapter.clone(),
+            HashMap::new(),
         );
         let signer = InMemoryValidatorSigner::from_seed("test", KeyType::ED25519, "test");
         let mut rs = ReedSolomonWrapper::new(4, 10);

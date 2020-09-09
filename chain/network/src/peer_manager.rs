@@ -38,7 +38,7 @@ use crate::types::{
     NetworkViewClientResponses, OutboundTcpConnect, PeerIdOrHash, PeerList, PeerManagerRequest,
     PeerMessage, PeerRequest, PeerResponse, PeerType, PeersRequest, PeersResponse, Ping, Pong,
     QueryPeerStats, RawRoutedMessage, ReasonForBan, RoutedMessage, RoutedMessageBody,
-    RoutedMessageFrom, SendMessage, SyncData, Unregister,
+    RoutedMessageFrom, SendMessage, SyncData, Unregister, UnvalidatedTx,
 };
 use crate::types::{
     EdgeList, KnownPeerState, NetworkClientMessages, NetworkConfig, NetworkRequests,
@@ -112,6 +112,7 @@ pub struct PeerManagerActor {
     client_addr: Recipient<NetworkClientMessages>,
     /// Address of the view client actor.
     view_client_addr: Recipient<NetworkViewClientMessages>,
+    incoming_tx_handler: Option<Recipient<UnvalidatedTx>>,
     /// Peer store that provides read/write access to peers.
     peer_store: PeerStore,
     /// Set of outbound connections that were not consolidated yet.
@@ -138,6 +139,7 @@ impl PeerManagerActor {
         config: NetworkConfig,
         client_addr: Recipient<NetworkClientMessages>,
         view_client_addr: Recipient<NetworkViewClientMessages>,
+        incoming_tx_handler: Option<Recipient<UnvalidatedTx>>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let peer_store = PeerStore::new(store.clone(), &config.boot_nodes)?;
         debug!(target: "network", "Found known peers: {} (boot nodes={})", peer_store.len(), config.boot_nodes.len());
@@ -156,6 +158,7 @@ impl PeerManagerActor {
             config,
             client_addr,
             view_client_addr,
+            incoming_tx_handler,
             peer_store,
             active_peers: HashMap::default(),
             outgoing_peers: HashSet::default(),
@@ -360,6 +363,7 @@ impl PeerManagerActor {
         let handshake_timeout = self.config.handshake_timeout;
         let client_addr = self.client_addr.clone();
         let view_client_addr = self.view_client_addr.clone();
+        let incoming_tx_handler = self.incoming_tx_handler.clone();
 
         let server_addr = match server_addr {
             Some(server_addr) => server_addr,
@@ -411,6 +415,7 @@ impl PeerManagerActor {
                 recipient,
                 client_addr,
                 view_client_addr,
+                incoming_tx_handler,
                 edge_info,
                 network_metrics,
             )

@@ -22,7 +22,8 @@ use near_chain_configs::Genesis;
 use near_client::{
     ClientActor, GetBlock, GetBlockProof, GetChunk, GetExecutionOutcome, GetGasPrice,
     GetNetworkInfo, GetNextLightClientBlock, GetStateChanges, GetStateChangesInBlock,
-    GetValidatorInfo, GetValidatorOrdered, Query, Status, TxStatus, TxStatusError, ViewClientActor,
+    GetValidatorInfo, GetValidatorOrdered, IncomingTxHandler, Query, Status, TxStatus,
+    TxStatusError, UnvalidatedTx, ViewClientActor,
 };
 use near_crypto::PublicKey;
 pub use near_jsonrpc_client as client;
@@ -186,6 +187,7 @@ fn timeout_err() -> RpcError {
 struct JsonRpcHandler {
     client_addr: Addr<ClientActor>,
     view_client_addr: Addr<ViewClientActor>,
+    incoming_tx_addr: Option<Addr<IncomingTxHandler>>,
     polling_config: RpcPollingConfig,
     genesis: Arc<Genesis>,
 }
@@ -256,11 +258,15 @@ impl JsonRpcHandler {
     async fn send_tx_async(&self, params: Option<Value>) -> Result<Value, RpcError> {
         let tx = parse_tx(params)?;
         let hash = (&tx.get_hash()).to_base();
-        self.client_addr.do_send(NetworkClientMessages::Transaction {
-            transaction: tx,
-            is_forwarded: false,
-            check_only: false,
-        });
+        if let Some(addr) = &self.incoming_tx_addr {
+            addr.do_send(UnvalidatedTx::new(tx, false, false));
+        } else {
+            self.client_addr.do_send(NetworkClientMessages::Transaction {
+                transaction: tx,
+                is_forwarded: false,
+                check_only: false,
+            });
+        }
         Ok(Value::String(hash))
     }
 
@@ -369,15 +375,20 @@ impl JsonRpcHandler {
     ) -> Result<NetworkClientResponses, RpcError> {
         let tx_hash = tx.get_hash();
         let signer_account_id = tx.transaction.signer_id.clone();
-        let response = self
-            .client_addr
-            .send(NetworkClientMessages::Transaction {
-                transaction: tx,
-                is_forwarded: false,
-                check_only,
-            })
-            .map_err(|err| RpcError::server_error(Some(ServerError::from(err))))
-            .await?;
+        let response = if let Some(addr) = &self.incoming_tx_addr {
+            addr.send(UnvalidatedTx::new(tx, false, check_only))
+                .map_err(|err| RpcError::server_error(Some(ServerError::from(err))))
+                .await?
+        } else {
+            self.client_addr
+                .send(NetworkClientMessages::Transaction {
+                    transaction: tx,
+                    is_forwarded: false,
+                    check_only,
+                })
+                .map_err(|err| RpcError::server_error(Some(ServerError::from(err))))
+                .await?
+        };
 
         // If we receive InvalidNonce error, it might be the case that the transaction was
         // resubmitted, and we should check if that is the case and return ValidTx response to
@@ -939,6 +950,7 @@ pub fn start_http(
     genesis: Arc<Genesis>,
     client_addr: Addr<ClientActor>,
     view_client_addr: Addr<ViewClientActor>,
+    incoming_tx_addr: Option<Addr<IncomingTxHandler>>,
 ) {
     let RpcConfig { addr, cors_allowed_origins, polling_config, limits_config } = config;
     HttpServer::new(move || {
@@ -947,6 +959,7 @@ pub fn start_http(
             .data(JsonRpcHandler {
                 client_addr: client_addr.clone(),
                 view_client_addr: view_client_addr.clone(),
+                incoming_tx_addr: incoming_tx_addr.clone(),
                 polling_config,
                 genesis: Arc::clone(&genesis),
             })

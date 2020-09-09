@@ -133,6 +133,7 @@ pub fn setup(
         Some(signer),
         telemetry,
         enable_doomslug,
+        HashMap::new(),
         #[cfg(feature = "adversarial")]
         adv,
     )
@@ -874,6 +875,7 @@ pub fn setup_client_with_runtime(
         network_adapter,
         validator_signer,
         enable_doomslug,
+        HashMap::new(),
     )
     .unwrap();
     client.sync_status = SyncStatus::NoSync;

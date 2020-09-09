@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::iter::Iterator;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
@@ -91,6 +91,7 @@ pub fn setup_network_node(
             Some(signer),
             telemetry_actor,
             false,
+            HashMap::new(),
             #[cfg(feature = "adversarial")]
             adv.clone(),
         )
@@ -111,6 +112,7 @@ pub fn setup_network_node(
             config,
             client_actor.recipient(),
             view_client_actor.recipient(),
+            None,
         )
         .unwrap()
     });

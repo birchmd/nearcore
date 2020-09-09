@@ -57,8 +57,14 @@ pub fn make_peer_manager(
     .start();
     let peer_id = config.public_key.clone().into();
     (
-        PeerManagerActor::new(store, config, client_addr.recipient(), view_client_addr.recipient())
-            .unwrap(),
+        PeerManagerActor::new(
+            store,
+            config,
+            client_addr.recipient(),
+            view_client_addr.recipient(),
+            None,
+        )
+        .unwrap(),
         peer_id,
         counter,
     )

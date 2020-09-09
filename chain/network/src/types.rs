@@ -1128,6 +1128,20 @@ pub enum NetworkClientMessages {
     NetworkInfo(NetworkInfo),
 }
 
+pub struct UnvalidatedTx {
+    pub tx: SignedTransaction,
+    pub is_forwarded: bool,
+    pub check_only: bool,
+}
+impl UnvalidatedTx {
+    pub fn new(tx: SignedTransaction, is_forwarded: bool, check_only: bool) -> Self {
+        Self { tx, is_forwarded, check_only }
+    }
+}
+impl Message for UnvalidatedTx {
+    type Result = NetworkClientResponses;
+}
+
 // TODO(#1313): Use Box
 #[derive(Eq, PartialEq, Debug)]
 #[allow(clippy::large_enum_variant)]
