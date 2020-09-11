@@ -8,6 +8,7 @@ use actix::{
     Actor, ActorContext, ActorFuture, Addr, Arbiter, AsyncContext, Context, ContextFutureSpawner,
     Handler, Recipient, Running, StreamHandler, WrapFuture,
 };
+use parking_lot::RwLock;
 use tracing::{debug, error, info, trace, warn};
 
 use near_metrics;
@@ -18,7 +19,7 @@ use near_primitives::unwrap_option_or_return;
 use near_primitives::utils::DisplayOption;
 use near_primitives::version::{OLDEST_BACKWARD_COMPATIBLE_PROTOCOL_VERSION, PROTOCOL_VERSION};
 
-use crate::codec::{bytes_to_peer_message, peer_message_to_bytes, Codec};
+use crate::codec::{self, bytes_to_peer_message, peer_message_to_bytes, Codec};
 use crate::rate_counter::RateCounter;
 #[cfg(feature = "metric_recorder")]
 use crate::recorder::{PeerMessageMetadata, Status};
@@ -36,6 +37,8 @@ use crate::{metrics, NetworkResponses};
 #[cfg(feature = "delay_detector")]
 use delay_detector::DelayDetector;
 use metrics::NetworkMetrics;
+use std::ops::{AddAssign, MulAssign};
+use std::sync::Arc;
 
 type WriteHalf = tokio::io::WriteHalf<tokio::net::TcpStream>;
 
@@ -163,6 +166,7 @@ pub struct Peer {
     last_time_received_message_update: Instant,
     /// Dynamic Prometheus metrics
     network_metrics: NetworkMetrics,
+    txns_since_last_block: Arc<RwLock<usize>>,
 }
 
 impl Peer {
@@ -179,6 +183,7 @@ impl Peer {
         incoming_tx_handler: Option<Recipient<UnvalidatedTx>>,
         edge_info: Option<EdgeInfo>,
         network_metrics: NetworkMetrics,
+        txns_since_last_block: Arc<RwLock<usize>>,
     ) -> Self {
         Peer {
             node_info,
@@ -198,6 +203,7 @@ impl Peer {
             edge_info,
             last_time_received_message_update: Instant::now(),
             network_metrics,
+            txns_since_last_block,
         }
     }
 
@@ -617,6 +623,12 @@ impl StreamHandler<Result<Vec<u8>, ReasonForBan>> for Peer {
         let msg_size = msg.len();
 
         self.tracker.increment_received(msg.len() as u64);
+        if codec::is_forward_tx(&msg) {
+            let r = self.txns_since_last_block.read();
+            if *r > 2000 {
+                return;
+            }
+        }
         let mut peer_msg = match bytes_to_peer_message(&msg) {
             Ok(peer_msg) => peer_msg,
             Err(err) => {
@@ -624,6 +636,14 @@ impl StreamHandler<Result<Vec<u8>, ReasonForBan>> for Peer {
                 return;
             }
         };
+        if let PeerMessage::Routed(rm) = &peer_msg {
+            if let RoutedMessageBody::ForwardTx(_) = rm.body {
+                self.txns_since_last_block.write().add_assign(1);
+            }
+        } else if let PeerMessage::Block(_) = &peer_msg {
+            let mut w = self.txns_since_last_block.write();
+            w.mul_assign(0);
+        }
 
         trace!(target: "network", "Received message: {}", peer_msg);
 
