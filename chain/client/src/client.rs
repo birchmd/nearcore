@@ -557,6 +557,7 @@ impl Client {
         chunk_extra: &ChunkExtra,
         prev_block_header: &BlockHeader,
     ) -> Result<Vec<SignedTransaction>, Error> {
+        /*
         let Self { chain, shards_mgr, runtime_adapter, .. } = self;
 
         let next_epoch_id =
@@ -590,6 +591,24 @@ impl Client {
         // included into the block.
         shards_mgr.reintroduce_transactions(shard_id, &transactions);
         Ok(transactions)
+        */
+        let tx_size = 1024*32;
+        let n_tx = 200;
+        let mut txns = Vec::with_capacity(n_tx);
+        for _ in 0..n_tx {
+            let code: Vec<u8> = (0..tx_size).map(|_| 1).collect();
+            let tx = near_primitives::transaction::Transaction {
+                signer_id: "tmp".to_string(),
+                public_key: near_crypto::PublicKey::empty(near_crypto::KeyType::ED25519),
+                nonce: 0,
+                receiver_id: "whatever".to_string(),
+                block_hash: CryptoHash::default(),
+                actions: vec![near_primitives::transaction::Action::DeployContract(near_primitives::transaction::DeployContractAction { code })],
+            };
+            let signed_tx = SignedTransaction::new(near_crypto::Signature::default(), tx);
+            txns.push(signed_tx);
+        }
+        Ok(txns)
     }
 
     pub fn send_challenges(&mut self, challenges: Arc<RwLock<Vec<ChallengeBody>>>) {

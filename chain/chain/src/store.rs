@@ -1767,6 +1767,12 @@ impl<'a> ChainStoreUpdate<'a> {
     }
 
     pub fn save_chunk(&mut self, chunk: ShardChunk) {
+        let chunk = ShardChunk {
+            chunk_hash: chunk.chunk_hash,
+            header: chunk.header,
+            transactions: Vec::new(),
+            receipts: Vec::new(),
+        };
         for transaction in &chunk.transactions {
             self.chain_store_cache_update.transactions.insert(transaction.clone());
         }
