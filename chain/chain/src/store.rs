@@ -1788,7 +1788,17 @@ impl<'a> ChainStoreUpdate<'a> {
         self.chain_store_cache_update.chunk_extras.insert((*block_hash, shard_id), chunk_extra);
     }
 
-    pub fn save_chunk(&mut self, chunk: ShardChunk) {
+    pub fn save_chunk(&mut self, mut chunk: ShardChunk) {
+        match &mut chunk {
+            ShardChunk::V1(ref mut chunk) => {
+                chunk.transactions.clear();
+                chunk.receipts.clear();
+            }
+            ShardChunk::V2(ref mut chunk) => {
+                chunk.transactions.clear();
+                chunk.receipts.clear();
+            }
+        }
         for transaction in chunk.transactions() {
             self.chain_store_cache_update.transactions.insert(transaction.clone());
         }
