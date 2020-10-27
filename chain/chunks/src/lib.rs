@@ -1079,6 +1079,8 @@ impl ShardsManager {
     ) -> Result<ProcessPartialEncodedChunkResult, Error> {
         // Check validity first
 
+        // let start = std::time::Instant::now();
+
         if !partial_encoded_chunk.header.version_range().contains(protocol_version) {
             return Err(Error::InvalidChunkHeader);
         }
@@ -1186,6 +1188,12 @@ impl ShardsManager {
         }
 
         // Consider it valid
+
+        // warn!("ShardsManager::process_partial_encoded_chunk/validation duration: {}", start.elapsed().as_micros());
+        warn!("{:?} received chunk {}", self.me, chunk_hash.0);
+
+        // let start = std::time::Instant::now();
+
         // Store chunk hash into chunk_hash_per_height_shard collection
         let mut store_update = chain_store.store_update();
         store_update.save_chunk_hash(
@@ -1232,6 +1240,8 @@ impl ShardsManager {
         )?;
         let have_all_seal = seal.process(entry);*/
 
+        // warn!("ShardsManager::process_partial_encoded_chunk/io duration: {}", start.elapsed().as_micros());
+
         if have_all_parts && have_all_receipts {
             let cares_about_shard = self.cares_about_shard_this_or_next_epoch(
                 self.me.as_ref(),
@@ -1260,6 +1270,7 @@ impl ShardsManager {
         }
 
         if can_reconstruct {
+            let start = std::time::Instant::now();
             let height = header.height_created();
             let mut encoded_chunk = EncodedShardChunk::from_header(
                 header,
@@ -1281,6 +1292,7 @@ impl ShardsManager {
 
             self.encoded_chunks.remove_from_cache_if_outside_horizon(&chunk_hash);
             self.requested_partial_encoded_chunks.remove(&chunk_hash);
+            warn!("ShardsManager::process_partial_encoded_chunk/reconstruct duration: {}", start.elapsed().as_micros());
             return Ok(ProcessPartialEncodedChunkResult::HaveAllPartsAndReceipts(prev_block_hash));
         }
 
@@ -1666,6 +1678,7 @@ impl ShardsManager {
                 );
 
             if Some(&to_whom) != self.me.as_ref() {
+                warn!("{:?} sending chunk {} to {}", self.me, partial_encoded_chunk.header.chunk_hash().0, to_whom);
                 self.network_adapter.do_send(NetworkRequests::PartialEncodedChunkMessage {
                     account_id: to_whom.clone(),
                     partial_encoded_chunk,

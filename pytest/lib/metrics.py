@@ -18,13 +18,14 @@ def fold(collection, key, f, default):
 class Metrics:
 
     def __init__(self, total_blocks, memory_usage, total_transactions,
-                 block_processing_time, timestamp, blocks_per_second):
+                 block_processing_time, timestamp, blocks_per_second, received_bytes):
         self.total_blocks = total_blocks
         self.memory_usage = memory_usage
         self.total_transactions = total_transactions
         self.block_processing_time = block_processing_time
         self.timestamp = timestamp
         self.blocks_per_second = blocks_per_second
+        self.received_bytes = received_bytes
 
     @classmethod
     def from_url(cls, metrics_url):
@@ -43,6 +44,7 @@ class Metrics:
         memory_usage = fold_sample('near_memory_usage_bytes')
         total_transactions = fold_sample('near_transaction_processed')
         blocks_per_second = fold_sample('near_blocks_per_minute') / 60.0
+        received_bytes = fold_sample('near_peer_data_received_bytes')
 
         def extract_block_processing_time(m):
             block_processing_time_samples = m.samples
@@ -59,7 +61,7 @@ class Metrics:
             dict(map(lambda bin: ('le ' + bin, 0), BLOCK_TIME_BINS)))
 
         return cls(total_blocks, memory_usage, total_transactions,
-                   block_processing_time, timestamp, blocks_per_second)
+                   block_processing_time, timestamp, blocks_per_second, received_bytes)
 
     @classmethod
     def diff(cls, final_metrics, initial_metrics):
@@ -67,6 +69,7 @@ class Metrics:
         memory_usage = final_metrics.memory_usage - initial_metrics.memory_usage
         total_transactions = final_metrics.total_transactions - initial_metrics.total_transactions
         timestamp = final_metrics.timestamp - initial_metrics.timestamp
+        received_bytes = final_metrics.received_bytes - initial_metrics.received_bytes
         blocks_per_second = (final_metrics.blocks_per_second + initial_metrics.blocks_per_second) / 2.0
         block_processing_time = {}
         for sample in final_metrics.block_processing_time.keys():
@@ -74,4 +77,4 @@ class Metrics:
                 sample] - initial_metrics.block_processing_time[sample]
 
         return cls(total_blocks, memory_usage, total_transactions,
-                   block_processing_time, timestamp, blocks_per_second)
+                   block_processing_time, timestamp, blocks_per_second, received_bytes)

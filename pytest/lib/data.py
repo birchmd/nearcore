@@ -51,6 +51,25 @@ def compute_rate(timestamps):
     return fit['slope']
 
 
+def find_index(seq, condition):
+    for (i, x) in enumerate(seq):
+        if condition(x):
+            return i
+    return None
+
+
+def group_by(seq, key_func):
+    keys = set(map(key_func, seq))
+    result = {}
+    for k in keys:
+        result[k] = []
+    for x in seq:
+        k = key_func(x)
+        result[k].append(x)
+    return result
+
+
+
 def flatten_dict(d):
     '''
     Flattens nested dictionaries to a single level. New keys have the form
