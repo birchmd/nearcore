@@ -28,6 +28,51 @@ def measure_bps(nodes, num_shards, output_file):
     print(measurement)
 
 
+def observe_validators_long_running(nodes, num_shards, output_file, seconds_between_measurements, duration_seconds):
+    pmap(mocknet.start_node, nodes)
+    start_time = time.time()
+    n_validators = 50
+    while time.time() - start_time < duration_seconds:
+        if n_validators < 35:
+            break
+        time.sleep(seconds_between_measurements)
+        try:
+            validators = nodes[-1].get_validators()['result']
+            if len(validators['current_validators']) != n_validators:
+                kicked_out = validators['prev_epoch_kickout']
+                with open(output_file,'a') as out_file:
+                    out_file.write(f'{time.time() - start_time}\t{kicked_out}\n')
+                n_validators = len(validators['current_validators'])
+                print(f'Some validators have been kicked out. {n_validators} remain.')
+        except:
+            continue
+    pmap(mocknet.reset_data, nodes)
+    if n_validators < 50:
+        raise Exception('Lost some validators.')
+
+
+def update_num_steats(num_shards):
+    genesis_file = f'genesis_{num_shards}.json'
+    total_seats = 100
+    with open(genesis_file) as f:
+        genesis = json.load(f, object_pairs_hook=OrderedDict)
+    genesis['num_block_producer_seats'] = total_seats
+    seats_per_shard = total_seats // num_shards
+    num_block_producer_seats_per_shard = [seats_per_shard] * num_shards
+    remainder_seats = total_seats - sum(num_block_producer_seats_per_shard)
+    i = 0
+    while remainder_seats > 0:
+        i = i % num_shards
+        num_block_producer_seats_per_shard[i] += 1
+        remainder_seats -= 1
+        i += 1
+    assert sum(num_block_producer_seats_per_shard) == total_seats
+    genesis['num_block_producer_seats_per_shard'] = num_block_producer_seats_per_shard
+    genesis['avg_hidden_validator_seats_per_shard'] = [0] * num_shards
+    with open(genesis_file, 'w') as f:
+        json.dump(genesis, f, indent=2)
+
+
 def update_genesis_timestamp(genesis_file):
     new_timestamp = datetime.datetime.utcnow().isoformat() + '000Z'
     lines = []
@@ -96,13 +141,13 @@ def setup_shard_tracking(nodes, num_shards):
     pmap(mocknet.reset_data, nodes)
     set_all_nodes_tracked_shards(nodes, config_file, shards_mapping)
     target_tps = 800 * num_shards + 200
-    sleep_time = 50.0 / target_tps
+    sleep_time = 100.0 / target_tps
     change_transfer_sleep_time(sleep_time)
 
 
 
 if __name__ == '__main__':
-    nodes = mocknet.get_nodes(prefix='sharded-')
+    nodes = mocknet.get_nodes() + mocknet.get_nodes(prefix='sharded-')
     output_file = 'shards_vs_tps.csv'
     num_shards_to_test = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] # , 11, 12, 13, 14, 15, 16, 20, 30 ,40 ,50, 60, 70, 80, 90, 100]
     for num_shards in num_shards_to_test:
