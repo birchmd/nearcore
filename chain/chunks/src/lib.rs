@@ -1094,6 +1094,7 @@ impl ShardsManager {
         let chunk_hash = header.chunk_hash();
 
         // 1. Checking signature validity
+        /*
         match self.runtime_adapter.verify_chunk_header_signature(&header) {
             Ok(false) => {
                 byzantine_assert!(false);
@@ -1114,6 +1115,7 @@ impl ShardsManager {
                 };
             }
         };
+        */
 
         // 2. Leave if we received known chunk
         if let Some(entry) = self.encoded_chunks.get(&chunk_hash) {
