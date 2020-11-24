@@ -1742,6 +1742,7 @@ impl Handler<RoutedMessageFrom> for PeerManagerActor {
             false
         } else {
             if msg.decrease_ttl() {
+                warn!("EVENT_TYPE_ID=08  Routing message with hash {}", msg.hash());
                 self.send_signed_message_to_peer(ctx, msg);
             } else {
                 warn!(target: "network", "Message dropped because TTL reached 0. Message: {:?} From: {:?}", msg, from);
