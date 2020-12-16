@@ -731,6 +731,7 @@ mod tests {
                                 if let NetworkRequests::PartialEncodedChunkMessage {
                                     partial_encoded_chunk,
                                     account_id,
+                                    ..
                                 } = msg
                                 {
                                     let height = partial_encoded_chunk.header.height_created();
@@ -804,6 +805,7 @@ mod tests {
                                 if let NetworkRequests::PartialEncodedChunkMessage {
                                     partial_encoded_chunk,
                                     account_id,
+                                    ..
                                 } = msg
                                 {
                                     let height = partial_encoded_chunk.header.height_created();
@@ -898,6 +900,7 @@ mod tests {
                         if let NetworkRequests::PartialEncodedChunkMessage {
                             account_id,
                             partial_encoded_chunk,
+                            ..
                         } = msg
                         {
                             let header = &partial_encoded_chunk.header;

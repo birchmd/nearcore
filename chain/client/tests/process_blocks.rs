@@ -108,6 +108,7 @@ fn produce_blocks_with_tx() {
                 if let NetworkRequests::PartialEncodedChunkMessage {
                     account_id: _,
                     partial_encoded_chunk,
+                    ..
                 } = msg
                 {
                     let header = partial_encoded_chunk.header.clone();

@@ -538,6 +538,7 @@ pub fn setup_mock_all_validators(
                         NetworkRequests::PartialEncodedChunkMessage {
                             account_id,
                             partial_encoded_chunk,
+                            ..
                         } => {
                             let create_msg = || {
                                 NetworkClientMessages::PartialEncodedChunk(

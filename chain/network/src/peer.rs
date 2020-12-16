@@ -792,12 +792,12 @@ impl StreamHandler<Result<Vec<u8>, ReasonForBan>> for Peer {
 
                 if handshake.chain_info.genesis_id != self.genesis_id {
                     debug!(target: "network", "Received connection from node with different genesis.");
-                    ctx.address().do_send(SendMessage {
-                        message: PeerMessage::HandshakeFailure(
+                    ctx.address().do_send(SendMessage::unstamped(
+                        PeerMessage::HandshakeFailure(
                             self.node_info.clone(),
                             HandshakeFailureReason::GenesisMismatch(self.genesis_id.clone()),
-                        ),
-                    });
+                        )
+                    ));
                     return;
                     // Connection will be closed by a handshake timeout
                 }
@@ -1012,6 +1012,10 @@ impl Handler<SendMessage> for Peer {
         #[cfg(feature = "delay_detector")]
         let _d = DelayDetector::new("send message".into());
         self.send_message(&msg.message);
+        let duration = msg.message.time_since_stamp();
+        if duration.as_millis() > 500 {
+            warn!("**** Message {} took a long time to send!\n{:?}", msg.message.msg_variant(), msg.message.as_ref());
+        }
     }
 }
 
@@ -1021,7 +1025,12 @@ impl Handler<Arc<SendMessage>> for Peer {
     fn handle(&mut self, msg: Arc<SendMessage>, _: &mut Self::Context) {
         #[cfg(feature = "delay_detector")]
         let _d = DelayDetector::new("send message".into());
-        self.send_message(&msg.as_ref().message);
+        let message = &msg.as_ref().message;
+        self.send_message(message);
+        let duration = message.time_since_stamp();
+        if duration.as_millis() > 500 {
+            warn!("**** Arc Message {} took a long time to send!\n{:?}", message.msg_variant(), message.as_ref());
+        }
     }
 }
 

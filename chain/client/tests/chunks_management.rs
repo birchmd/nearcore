@@ -198,6 +198,7 @@ fn chunks_produced_and_distributed_common(
                     NetworkRequests::PartialEncodedChunkMessage {
                         account_id: to_whom,
                         partial_encoded_chunk: _,
+                        ..
                     } => {
                         partial_chunk_msgs += 1;
                         if drop_from_1_to_4 && from_whom == "test1" && to_whom == "test4" {

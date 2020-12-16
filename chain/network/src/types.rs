@@ -56,6 +56,43 @@ pub const ROUTED_MESSAGE_TTL: u8 = 100;
 /// Peer and PeerManager.
 pub const UPDATE_INTERVAL_LAST_TIME_RECEIVED_MESSAGE: Duration = Duration::from_secs(60);
 
+#[derive(Clone, Debug)]
+pub struct Stamped<T> {
+    data: T,
+    timestamp: Instant,
+}
+
+impl<T> Stamped<T> {
+    pub fn new(data: T) -> Self {
+        Self {data, timestamp: Instant::now()}
+    }
+
+    pub fn with_stamp(data: T, timestamp: Instant) -> Self {
+        Self {data, timestamp}
+    }
+
+    pub fn map<U, F: FnOnce(T) -> U>(self, f: F) -> Stamped<U> {
+        let data = f(self.data);
+        Stamped {data, timestamp: self.timestamp}
+    }
+
+    pub fn time_since_stamp(&self) -> Duration {
+        self.timestamp.elapsed()
+    }
+
+    pub fn as_ref(&self) -> &T {
+        &self.data
+    }
+}
+
+impl<T: Sized> std::ops::Deref for Stamped<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        &self.data
+    }
+}
+
 /// Peer information.
 #[derive(BorshSerialize, BorshDeserialize, Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct PeerInfo {
@@ -1036,7 +1073,15 @@ pub struct OutboundTcpConnect {
 #[derive(Message, Clone, Debug)]
 #[rtype(result = "()")]
 pub struct SendMessage {
-    pub message: PeerMessage,
+    pub message: Stamped<PeerMessage>,
+}
+
+impl SendMessage {
+    pub fn unstamped(msg: PeerMessage) -> Self {
+        Self {
+            message: Stamped::new(msg),
+        }
+    }
 }
 
 /// Actor message to consolidate potential new peer.
@@ -1210,6 +1255,7 @@ pub enum NetworkRequests {
     PartialEncodedChunkMessage {
         account_id: AccountId,
         partial_encoded_chunk: PartialEncodedChunkWithArcReceipts,
+        timestamp: Instant,
     },
     /// Forwarding a chunk part to a validator tracking the shard
     #[cfg(feature = "protocol_feature_forward_chunk_parts")]
