@@ -228,6 +228,16 @@ On my GitHub I have a useful function which watches the network and raises an ex
 
 https://github.com/birchmd/nearcore/blob/shard-scaling/pytest/tests/mocknet/bps_vs_shards.py#L31
 
+## Starting and stopping _MACHINES_
+
+The first 54 nodes (`mocknet-nodeX`) are always running since they are also used for Nayduck (see below a note about
+restoring the Nayduck configuration after running other tests). However, the other 54 nodes (`sharded-mocknet-nodeX`)
+are not used in any automated testing. Therefore, when no tests are running I shut them down to save money. This can be
+done via the Google cloud console, https://console.cloud.google.com/ (probably also the CLI, but I find the console pretty
+easy to use for this simple task).
+
+Obviously, the machines need to be started again if they are shutdown and you want to run a new test with them.
+
 ## Warnings about Nayduck
 
 ### Preventing simultaneous tests
