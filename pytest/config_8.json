@@ -69,15 +69,15 @@
       "nanos": 100000000
     },
     "min_block_production_delay": {
-      "secs": 0,
-      "nanos": 600000000
+      "secs": 1,
+      "nanos": 0
     },
     "max_block_production_delay": {
-      "secs": 2,
+      "secs": 6,
       "nanos": 0
     },
     "max_block_wait_delay": {
-      "secs": 6,
+      "secs": 12,
       "nanos": 0
     },
     "reduce_wait_for_missing_block": {
