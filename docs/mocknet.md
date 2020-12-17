@@ -228,7 +228,9 @@ On my GitHub I have a useful function which watches the network and raises an ex
 
 https://github.com/birchmd/nearcore/blob/shard-scaling/pytest/tests/mocknet/bps_vs_shards.py#L31
 
-## Warning about Nayduck
+## Warnings about Nayduck
+
+### Preventing simultaneous tests
 
 Since the Nayduck tests use some of the same machines as the ad-hoc tests we have been running, you need to make sure
 that Nayduck mocknet tests do not start running while you are running a test (otherwise both will be messed up). To
@@ -242,3 +244,18 @@ python3 nightly/nayduck.py --test_file nightly/mocknet.txt
 ```
 
 This will prevent Nayduck mocknet tests from running for 12 hours for example.
+
+### Re-configuring for mocknet
+
+After any ad-hoc sharded testing, the config and genesis files need to be restored for the Nayduck tests to work properly.
+This can be done using a script in the `near-ops` repo. Assuming you have a python virtual environment setup for that repo:
+
+```
+cd near-ops
+./venv/bin/python mocknet.py deploy LATEST_COMMIT_TO_MASTER \
+    && ./venv/bin/python mocknet.py reset LATEST_COMMIT_TO_MASTER && \
+    ./venv/bin/python mocknet.py start
+
+```
+
+I try to make sure that mocknet is prepared for Nayduck whenever I am not actively running a test of my own.
