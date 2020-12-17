@@ -1012,10 +1012,22 @@ impl Handler<SendMessage> for Peer {
         #[cfg(feature = "delay_detector")]
         let _d = DelayDetector::new("send message".into());
         self.send_message(&msg.message);
-        let duration = msg.message.time_since_stamp();
-        if duration.as_millis() > 500 {
-            warn!("**** Message {} took a long time to send!\n{:?}", msg.message.msg_variant(), msg.message.as_ref());
-        }
+        let duration_ms = msg.message.time_since_stamp().as_millis();
+        match msg.message.as_ref() {
+            PeerMessage::Routed(routed_msg) => {
+                match &routed_msg.body {
+                    RoutedMessageBody::PartialEncodedChunkRequest(_) |
+                    RoutedMessageBody::PartialEncodedChunkResponse(_) |
+                    RoutedMessageBody::PartialEncodedChunk(_) |
+                    RoutedMessageBody::VersionedPartialEncodedChunk(_) |
+                    RoutedMessageBody::PartialEncodedChunkForward(_) => {
+                        info!("EVENT_TYPE_ID=777  Message {:?} took {}ms to send.", routed_msg.body, duration_ms);
+                    }
+                    _ => (),
+                }
+            }
+            _ => (),
+        };
     }
 }
 
@@ -1027,10 +1039,6 @@ impl Handler<Arc<SendMessage>> for Peer {
         let _d = DelayDetector::new("send message".into());
         let message = &msg.as_ref().message;
         self.send_message(message);
-        let duration = message.time_since_stamp();
-        if duration.as_millis() > 500 {
-            warn!("**** Arc Message {} took a long time to send!\n{:?}", message.msg_variant(), message.as_ref());
-        }
     }
 }
 

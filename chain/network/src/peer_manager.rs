@@ -1248,7 +1248,7 @@ impl Handler<NetworkRequests> for PeerManagerActor {
                 self.announce_account(ctx, announce_account);
                 NetworkResponses::NoResponse
             }
-            NetworkRequests::PartialEncodedChunkRequest { target, request } => {
+            NetworkRequests::PartialEncodedChunkRequest { target, request, timestamp } => {
                 let mut success = false;
 
                 // Make two attempts to send the message. First following the preference of `prefer_peer`,
@@ -1259,7 +1259,7 @@ impl Handler<NetworkRequests> for PeerManagerActor {
                             if self.send_message_to_account(
                                 ctx,
                                 &account_id,
-                                Stamped::new(RoutedMessageBody::PartialEncodedChunkRequest(request.clone())),
+                                Stamped::with_stamp(RoutedMessageBody::PartialEncodedChunkRequest(request.clone()), timestamp),
                             ) {
                                 success = true;
                                 break;
@@ -1284,13 +1284,14 @@ impl Handler<NetworkRequests> for PeerManagerActor {
                         {
                             if self.send_message_to_peer(
                                 ctx,
-                                Stamped::new(
+                                Stamped::with_stamp(
                                     RawRoutedMessage {
                                         target: AccountOrPeerIdOrHash::PeerId(matching_peer.clone()),
                                         body: RoutedMessageBody::PartialEncodedChunkRequest(
                                             request.clone(),
                                         ),
-                                    }
+                                    },
+                                    timestamp,
                                 ),
                             ) {
                                 success = true;
@@ -1306,14 +1307,15 @@ impl Handler<NetworkRequests> for PeerManagerActor {
                     NetworkResponses::RouteNotFound
                 }
             }
-            NetworkRequests::PartialEncodedChunkResponse { route_back, response } => {
+            NetworkRequests::PartialEncodedChunkResponse { route_back, response, timestamp } => {
                 if self.send_message_to_peer(
                     ctx,
-                    Stamped::new(
+                    Stamped::with_stamp(
                         RawRoutedMessage {
                             target: AccountOrPeerIdOrHash::Hash(route_back),
                             body: RoutedMessageBody::PartialEncodedChunkResponse(response),
-                        }
+                        },
+                        timestamp,
                     ),
                 ) {
                     NetworkResponses::NoResponse
@@ -1331,11 +1333,11 @@ impl Handler<NetworkRequests> for PeerManagerActor {
                 }
             }
             #[cfg(feature = "protocol_feature_forward_chunk_parts")]
-            NetworkRequests::PartialEncodedChunkForward { account_id, forward } => {
+            NetworkRequests::PartialEncodedChunkForward { account_id, forward, timestamp } => {
                 if self.send_message_to_account(
                     ctx,
                     &account_id,
-                    Stamped::new(RoutedMessageBody::PartialEncodedChunkForward(forward)),
+                    Stamped::with_stamp(RoutedMessageBody::PartialEncodedChunkForward(forward), timestamp),
                 ) {
                     NetworkResponses::NoResponse
                 } else {

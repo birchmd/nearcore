@@ -536,8 +536,9 @@ impl ShardsManager {
                     },
                 };
 
+                let timestamp = Instant::now();
                 self.network_adapter
-                    .do_send(NetworkRequests::PartialEncodedChunkRequest { target, request });
+                    .do_send(NetworkRequests::PartialEncodedChunkRequest { target, request, timestamp });
             } else {
                 warn!(target: "client", "{:?} requests parts {:?} for chunk {:?} from self",
                     me, part_ords, chunk_hash
@@ -929,8 +930,9 @@ impl ShardsManager {
 
         let response = PartialEncodedChunkResponseMsg { chunk_hash, parts, receipts };
 
+        let timestamp = Instant::now();
         self.network_adapter
-            .do_send(NetworkRequests::PartialEncodedChunkResponse { route_back, response });
+            .do_send(NetworkRequests::PartialEncodedChunkResponse { route_back, response, timestamp });
     }
 
     pub fn check_chunk_complete(
@@ -1384,6 +1386,7 @@ impl ShardsManager {
                 self.network_adapter.do_send(NetworkRequests::PartialEncodedChunkForward {
                     account_id: bp.account_id.clone(),
                     forward: forward.clone(),
+                    timestamp: Instant::now(),
                 });
             }
         }

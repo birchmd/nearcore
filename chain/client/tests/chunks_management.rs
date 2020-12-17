@@ -219,12 +219,14 @@ fn chunks_produced_and_distributed_common(
                     NetworkRequests::PartialEncodedChunkResponse {
                         route_back: _,
                         response: _,
+                        timestamp: _,
                     } => {
                         partial_chunk_msgs += 1;
                     }
                     NetworkRequests::PartialEncodedChunkRequest {
                         target: AccountIdOrPeerTrackingShard { account_id: Some(to_whom), .. },
                         request: _,
+                        timestamp: _,
                     } => {
                         if drop_from_1_to_4 && from_whom == "test4" && to_whom == "test1" {
                             info!("Dropping Partial Encoded Chunk Request from test4 to test1");

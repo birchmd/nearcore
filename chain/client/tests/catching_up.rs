@@ -771,6 +771,7 @@ mod tests {
                                             account_id: Some(account_id),
                                             ..
                                         },
+                                    ..
                                 } = msg
                                 {
                                     if request.chunk_hash == *grieving_chunk_hash {
@@ -782,6 +783,7 @@ mod tests {
                                 } else if let NetworkRequests::PartialEncodedChunkRequest {
                                     request: _,
                                     target: _,
+                                    ..
                                 } = msg
                                 {
                                     // this test was written before the feature that allows
@@ -794,6 +796,7 @@ mod tests {
                                 if let NetworkRequests::PartialEncodedChunkResponse {
                                     route_back: _,
                                     response,
+                                    ..
                                 } = msg
                                 {
                                     if response.chunk_hash == *grieving_chunk_hash {
@@ -918,7 +921,7 @@ mod tests {
                                 header.shard_id(),
                             ));
                         }
-                        if let NetworkRequests::PartialEncodedChunkRequest { target: _, request } =
+                        if let NetworkRequests::PartialEncodedChunkRequest { target: _, request, .. } =
                             msg
                         {
                             if verbose {
@@ -939,6 +942,7 @@ mod tests {
                         if let NetworkRequests::PartialEncodedChunkResponse {
                             route_back,
                             response,
+                            ..
                         } = msg
                         {
                             if verbose {

@@ -508,7 +508,7 @@ pub fn setup_mock_all_validators(
                                 .unwrap()
                                 .insert(*block.header().hash(), block.header().height());
                         }
-                        NetworkRequests::PartialEncodedChunkRequest { target, request } => {
+                        NetworkRequests::PartialEncodedChunkRequest { target, request, .. } => {
                             let create_msg = || {
                                 NetworkClientMessages::PartialEncodedChunkRequest(
                                     request.clone(),
@@ -523,7 +523,7 @@ pub fn setup_mock_all_validators(
                                 create_msg,
                             );
                         }
-                        NetworkRequests::PartialEncodedChunkResponse { route_back, response } => {
+                        NetworkRequests::PartialEncodedChunkResponse { route_back, response, .. } => {
                             let create_msg = || {
                                 NetworkClientMessages::PartialEncodedChunkResponse(response.clone())
                             };
@@ -554,7 +554,7 @@ pub fn setup_mock_all_validators(
                             );
                         }
                         #[cfg(feature = "protocol_feature_forward_chunk_parts")]
-                        NetworkRequests::PartialEncodedChunkForward { account_id, forward } => {
+                        NetworkRequests::PartialEncodedChunkForward { account_id, forward, .. } => {
                             let create_msg = || {
                                 NetworkClientMessages::PartialEncodedChunkForward(forward.clone())
                             };

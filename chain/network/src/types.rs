@@ -1245,11 +1245,13 @@ pub enum NetworkRequests {
     PartialEncodedChunkRequest {
         target: AccountIdOrPeerTrackingShard,
         request: PartialEncodedChunkRequestMsg,
+        timestamp: Instant,
     },
     /// Information about chunk such as its header, some subset of parts and/or incoming receipts
     PartialEncodedChunkResponse {
         route_back: CryptoHash,
         response: PartialEncodedChunkResponseMsg,
+        timestamp: Instant,
     },
     /// Information about chunk such as its header, some subset of parts and/or incoming receipts
     PartialEncodedChunkMessage {
@@ -1262,6 +1264,7 @@ pub enum NetworkRequests {
     PartialEncodedChunkForward {
         account_id: AccountId,
         forward: PartialEncodedChunkForwardMsg,
+        timestamp: Instant,
     },
 
     /// Valid transaction but since we are not validators we send this transaction to current validators.
