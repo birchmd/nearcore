@@ -566,8 +566,8 @@ impl Debug for RoutedMessageBody {
             RoutedMessageBody::PartialEncodedChunk(chunk) => {
                 write!(f, "PartialChunk({:?})", chunk.header.hash)
             }
-            RoutedMessageBody::VersionedPartialEncodedChunk(_) => {
-                write!(f, "VersionedPartialChunk(?)")
+            RoutedMessageBody::VersionedPartialEncodedChunk(chunk) => {
+                write!(f, "VersionedPartialChunk({})", chunk.chunk_hash().0)
             }
             RoutedMessageBody::VersionedStateResponse(response) => write!(
                 f,

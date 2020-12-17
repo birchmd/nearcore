@@ -463,6 +463,7 @@ impl Handler<NetworkClientMessages> for ClientActor {
                 NetworkClientResponses::NoResponse
             }
             NetworkClientMessages::PartialEncodedChunkRequest(part_request_msg, route_back) => {
+                info!("EVENT_TYPE_ID=111  Received PartialEncodedChunkRequest({}, {:?})", part_request_msg.chunk_hash.0, part_request_msg.part_ords);
                 let _ = self.client.shards_mgr.process_partial_encoded_chunk_request(
                     part_request_msg,
                     route_back,
@@ -471,6 +472,7 @@ impl Handler<NetworkClientMessages> for ClientActor {
                 NetworkClientResponses::NoResponse
             }
             NetworkClientMessages::PartialEncodedChunkResponse(response) => {
+                info!("EVENT_TYPE_ID=222  Received PartialEncodedChunkResponse({}, {:?})", response.chunk_hash.0, response.parts.iter().map(|p| p.part_ord).collect::<Vec<_>>());
                 if let Ok(accepted_blocks) =
                     self.client.process_partial_encoded_chunk_response(response)
                 {
@@ -479,6 +481,7 @@ impl Handler<NetworkClientMessages> for ClientActor {
                 NetworkClientResponses::NoResponse
             }
             NetworkClientMessages::PartialEncodedChunk(partial_encoded_chunk) => {
+                info!("EVENT_TYPE_ID=222  Received PartialEncodedChunk({}, {:?})", partial_encoded_chunk.chunk_hash().0, partial_encoded_chunk.parts().iter().map(|p| p.part_ord).collect::<Vec<_>>());
                 if let Ok(accepted_blocks) = self.client.process_partial_encoded_chunk(
                     MaybeValidated::NotValidated(partial_encoded_chunk),
                 ) {
@@ -488,6 +491,7 @@ impl Handler<NetworkClientMessages> for ClientActor {
             }
             #[cfg(feature = "protocol_feature_forward_chunk_parts")]
             NetworkClientMessages::PartialEncodedChunkForward(forward) => {
+                info!("EVENT_TYPE_ID=333  Received PartialEncodedChunkForward({}, {:?})", forward.chunk_hash.0, forward.parts.iter().map(|p| p.part_ord).collect::<Vec<_>>());
                 match self.client.process_partial_encoded_chunk_forward(forward) {
                     Ok(accepted_blocks) => self.process_accepted_blocks(accepted_blocks),
                     // Unknown chunk is normal if we get parts before the header
@@ -940,7 +944,7 @@ impl ClientActor {
     /// Processes received block. Ban peer if the block header is invalid or the block is ill-formed.
     fn receive_block(&mut self, block: Block, peer_id: PeerId, was_requested: bool) {
         let hash = *block.hash();
-        debug!(target: "client", "{:?} Received block {} <- {} at {} from {}, requested: {}", self.client.validator_signer.as_ref().map(|vs| vs.validator_id()), hash, block.header().prev_hash(), block.header().height(), peer_id, was_requested);
+        info!(target: "client", "{:?} Received block {} <- {} at {} from {}, requested: {}", self.client.validator_signer.as_ref().map(|vs| vs.validator_id()), hash, block.header().prev_hash(), block.header().height(), peer_id, was_requested);
         let head = unwrap_or_return!(self.client.chain.head());
         let is_syncing = self.client.sync_status.is_syncing();
         if block.header().height() >= head.height + BLOCK_HORIZON && is_syncing && !was_requested {
@@ -972,7 +976,7 @@ impl ClientActor {
                     }
                 }
                 near_chain::ErrorKind::ChunksMissing(missing_chunks) => {
-                    debug!(
+                    warn!(
                         target: "client",
                         "Chunks were missing for block {}, I'm {:?}, requesting. Missing: {:?}, ({:?})",
                         hash.clone(),
