@@ -31,23 +31,28 @@ def measure_bps(nodes, num_shards, output_file):
 def observe_validators_long_running(nodes, num_shards, output_file, seconds_between_measurements, duration_seconds):
     pmap(mocknet.start_node, nodes)
     start_time = time.time()
-    n_validators = 50
+    EXPECTED_VALIDATORS = 100
+    n_validators = EXPECTED_VALIDATORS
+    last_recorded_kickout = []
+    i = 0
     while time.time() - start_time < duration_seconds:
-        if n_validators < 35:
+        if n_validators < EXPECTED_VALIDATORS:
             break
         time.sleep(seconds_between_measurements)
+        i = (i + 1) % EXPECTED_VALIDATORS
         try:
-            validators = nodes[-1].get_validators()['result']
-            if len(validators['current_validators']) != n_validators:
-                kicked_out = validators['prev_epoch_kickout']
+            validators = nodes[i].get_validators()['result']
+            ko = validators['prev_epoch_kickout']
+            if len(ko) > 0 and ko != last_recorded_kickout:
+                last_recorded_kickout = ko
                 with open(output_file,'a') as out_file:
-                    out_file.write(f'{time.time() - start_time}\t{kicked_out}\n')
-                n_validators = len(validators['current_validators'])
+                    out_file.write(f'{time.time() - start_time}\t{ko}\n')
+                n_validators = len(validators['current_validators']) - len(ko)
                 print(f'Some validators have been kicked out. {n_validators} remain.')
         except:
             continue
     pmap(mocknet.reset_data, nodes)
-    if n_validators < 50:
+    if n_validators < EXPECTED_VALIDATORS:
         raise Exception('Lost some validators.')
 
 
