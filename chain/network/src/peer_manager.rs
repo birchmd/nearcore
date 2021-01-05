@@ -438,7 +438,7 @@ impl PeerManagerActor {
                 remote_addr,
                 peer_info,
                 peer_type,
-                FramedWrite::new(write, Codec::new(), ctx),
+                crate::types::TcpMagic::new(write),
                 handshake_timeout,
                 recipient,
                 client_addr,

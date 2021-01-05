@@ -12,6 +12,7 @@ use borsh::{BorshDeserialize, BorshSerialize};
 use chrono::{DateTime, Utc};
 use futures::{future::BoxFuture, FutureExt};
 use serde::{Deserialize, Serialize};
+use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
 use tracing::{error, warn};
 
@@ -1679,6 +1680,34 @@ impl PartialEncodedChunkForwardMsg {
     pub fn is_valid_hash(&self) -> bool {
         let correct_hash = combine_hash(self.inner_header_hash, self.merkle_root);
         ChunkHash(correct_hash) == self.chunk_hash
+    }
+}
+
+pub struct TcpMagic {
+    writer: std::sync::Mutex<tokio::io::WriteHalf<tokio::net::TcpStream>>,
+}
+
+impl TcpMagic {
+    pub fn new(writer: tokio::io::WriteHalf<tokio::net::TcpStream>) -> Self {
+        Self {
+            writer: std::sync::Mutex::new(writer),
+        }
+    }
+
+    pub async fn write_with(thing: std::sync::Arc<Self>, bytes: Vec<u8>) {
+        thing.write(bytes).await
+    }
+
+    pub async fn write(&self, bytes: Vec<u8>) {
+        let mut x = self.writer.lock().unwrap();
+        Self::do_the_thing(&mut x, &bytes).await;
+    }
+
+    async fn do_the_thing(writer: &mut tokio::io::WriteHalf<tokio::net::TcpStream>, bytes: &[u8]) {
+        let n = bytes.len() as u32;
+        writer.write_all(&n.to_le_bytes()).await.unwrap_or_default();
+        writer.write_all(bytes).await.unwrap_or_default();
+        writer.flush().await.unwrap_or_default();
     }
 }
 

@@ -155,7 +155,7 @@ pub struct Peer {
     /// Protocol version to communicate with this peer.
     pub protocol_version: ProtocolVersion,
     /// Framed wrapper to send messages through the TCP connection.
-    framed: FramedWrite<WriteHalf, Codec>,
+    framed: Arc<crate::types::TcpMagic>,
     /// Handshake timeout.
     handshake_timeout: Duration,
     /// Peer manager recipient to break the dependency loop.
@@ -188,7 +188,7 @@ impl Peer {
         peer_addr: SocketAddr,
         peer_info: Option<PeerInfo>,
         peer_type: PeerType,
-        framed: FramedWrite<WriteHalf, Codec>,
+        framed: crate::types::TcpMagic,
         handshake_timeout: Duration,
         peer_manager_addr: Addr<PeerManagerActor>,
         client_addr: Recipient<NetworkClientMessages>,
@@ -205,7 +205,7 @@ impl Peer {
             peer_type,
             peer_status: PeerStatus::Connecting,
             protocol_version: PROTOCOL_VERSION,
-            framed,
+            framed: Arc::new(framed),
             handshake_timeout,
             peer_manager_addr,
             client_addr,
@@ -230,7 +230,7 @@ impl Peer {
             || self.tracker.sent_bytes.count_per_min() > MAX_PEER_MSG_PER_MIN
     }
 
-    fn send_message(&mut self, msg: &PeerMessage) {
+    fn send_message(&mut self, msg: &PeerMessage, ctx: &mut Context<Peer>) {
         // Skip sending block and headers if we received it or header from this peer.
         // Record block requests in tracker.
         match msg {
@@ -253,7 +253,10 @@ impl Peer {
                 #[cfg(feature = "metric_recorder")]
                 self.peer_manager_addr.do_send(metadata.set_size(bytes.len()));
                 self.tracker.increment_sent(bytes.len() as u64);
-                self.framed.write(bytes);
+                let writer = Arc::clone(&self.framed);
+                ctx.wait(
+                    actix::fut::wrap_future(crate::types::TcpMagic::write_with(writer, bytes))
+                );
             }
             Err(err) => error!(target: "network", "Error converting message to bytes: {}", err),
         };
@@ -317,7 +320,7 @@ impl Peer {
                         }
                     };
 
-                    act.send_message(&handshake);
+                    act.send_message(&handshake, _ctx);
                     actix::fut::ready(())
                 }
                 Err(err) => {
@@ -439,10 +442,10 @@ impl Peer {
                     }
                     Ok(NetworkViewClientResponses::Block(block)) => {
                         // MOO need protocol version
-                        act.send_message(&PeerMessage::Block(*block))
+                        act.send_message(&PeerMessage::Block(*block), _ctx)
                     }
                     Ok(NetworkViewClientResponses::BlockHeaders(headers)) => {
-                        act.send_message(&PeerMessage::BlockHeaders(headers))
+                        act.send_message(&PeerMessage::BlockHeaders(headers), _ctx)
                     }
                     Err(err) => {
                         error!(
@@ -701,7 +704,7 @@ impl StreamHandler<Result<Vec<u8>, ReasonForBan>> for Peer {
                             version: PROTOCOL_VERSION,
                             oldest_supported_version: OLDEST_BACKWARD_COMPATIBLE_PROTOCOL_VERSION,
                         },
-                    ));
+                    ), ctx);
                 } else {
                     info!(target: "network", "Received invalid data {:?} from {}: {}", msg, self.peer_info, err);
                 }
@@ -814,7 +817,7 @@ impl StreamHandler<Result<Vec<u8>, ReasonForBan>> for Peer {
                     self.send_message(&PeerMessage::HandshakeFailure(
                         self.node_info.clone(),
                         HandshakeFailureReason::InvalidTarget,
-                    ));
+                    ), ctx);
                     return;
                     // Connection will be closed by a handshake timeout
                 }
@@ -873,7 +876,7 @@ impl StreamHandler<Result<Vec<u8>, ReasonForBan>> for Peer {
                             },
                             Ok(ConsolidateResponse::InvalidNonce(edge)) => {
                                 debug!(target: "network", "{:?}: Received invalid nonce from peer {:?} sending evidence.", act.node_id(), act.peer_addr);
-                                act.send_message(&PeerMessage::LastEdge(*edge));
+                                act.send_message(&PeerMessage::LastEdge(*edge), ctx);
                                 actix::fut::ready(())
                             }
                             _ => {
@@ -928,7 +931,7 @@ impl StreamHandler<Result<Vec<u8>, ReasonForBan>> for Peer {
                     if let Ok(peers) = res {
                         if !peers.peers.is_empty() {
                             debug!(target: "network", "Peers request from {}: sending {} peers.", act.peer_info, peers.peers.len());
-                            act.send_message(&PeerMessage::PeersResponse(peers.peers));
+                            act.send_message(&PeerMessage::PeersResponse(peers.peers), _ctx);
                         }
                     }
                     actix::fut::ready(())
@@ -945,7 +948,7 @@ impl StreamHandler<Result<Vec<u8>, ReasonForBan>> for Peer {
                 .then(|res, act, ctx| {
                     match res {
                         Ok(NetworkResponses::EdgeUpdate(edge)) => {
-                            act.send_message(&PeerMessage::ResponseUpdateNonce(*edge));
+                            act.send_message(&PeerMessage::ResponseUpdateNonce(*edge), ctx);
                         }
                         Ok(NetworkResponses::BanPeer(reason_for_ban)) => {
                             act.ban_peer(ctx, reason_for_ban);
@@ -1008,10 +1011,10 @@ impl StreamHandler<Result<Vec<u8>, ReasonForBan>> for Peer {
 impl Handler<SendMessage> for Peer {
     type Result = ();
 
-    fn handle(&mut self, msg: SendMessage, _: &mut Self::Context) {
+    fn handle(&mut self, msg: SendMessage, ctx: &mut Self::Context) {
         #[cfg(feature = "delay_detector")]
         let _d = DelayDetector::new("send message".into());
-        self.send_message(&msg.message);
+        self.send_message(&msg.message, ctx);
         let duration_ms = msg.message.time_since_stamp().as_millis();
         match msg.message.as_ref() {
             PeerMessage::Routed(routed_msg) => {
@@ -1034,11 +1037,11 @@ impl Handler<SendMessage> for Peer {
 impl Handler<Arc<SendMessage>> for Peer {
     type Result = ();
 
-    fn handle(&mut self, msg: Arc<SendMessage>, _: &mut Self::Context) {
+    fn handle(&mut self, msg: Arc<SendMessage>, ctx: &mut Self::Context) {
         #[cfg(feature = "delay_detector")]
         let _d = DelayDetector::new("send message".into());
         let message = &msg.as_ref().message;
-        self.send_message(message);
+        self.send_message(message, ctx);
     }
 }
 
