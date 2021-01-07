@@ -231,16 +231,24 @@ impl Peer {
     }
 
     fn send_message(&mut self, msg: &PeerMessage, ctx: &mut Context<Peer>) {
+        self.super_send_message(crate::types::MaybeStamped::NotStamped(msg), ctx)
+    }
+
+    fn send_stamped_message(&mut self, msg: crate::types::Stamped<PeerMessage>, ctx: &mut Context<Peer>) {
+        self.super_send_message(crate::types::MaybeStamped::YesStamped(msg), ctx)
+    }
+
+    fn super_send_message(&mut self, msg: crate::types::MaybeStamped<PeerMessage>, ctx: &mut Context<Peer>) {
         // Skip sending block and headers if we received it or header from this peer.
         // Record block requests in tracker.
-        match msg {
+        match msg.as_ref() {
             PeerMessage::Block(b) if self.tracker.has_received(b.hash()) => return,
             PeerMessage::BlockRequest(h) => self.tracker.push_request(*h),
             _ => (),
         };
         #[cfg(feature = "metric_recorder")]
         let metadata = {
-            let mut metadata: PeerMessageMetadata = msg.into();
+            let mut metadata: PeerMessageMetadata = msg.as_ref().into();
             metadata = metadata.set_source(self.node_id()).set_status(Status::Sent);
             if let Some(target) = self.peer_id() {
                 metadata = metadata.set_target(target);
@@ -248,15 +256,38 @@ impl Peer {
             metadata
         };
 
-        match peer_message_to_bytes(msg) {
+        match peer_message_to_bytes(msg.as_ref()) {
             Ok(bytes) => {
                 #[cfg(feature = "metric_recorder")]
                 self.peer_manager_addr.do_send(metadata.set_size(bytes.len()));
                 self.tracker.increment_sent(bytes.len() as u64);
                 let writer = Arc::clone(&self.framed);
-                ctx.wait(
-                    actix::fut::wrap_future(crate::types::TcpMagic::write_with(writer, bytes))
-                );
+                if let crate::types::MaybeStamped::YesStamped(msg) = msg {
+                    ctx.wait(
+                        actix::fut::wrap_future(crate::types::TcpMagic::write_with(writer, bytes))
+                            .then(move |_, _: &mut Peer, _| {
+                                let duration_ms = msg.time_since_stamp().as_millis();
+                                match msg.as_ref() {
+                                    PeerMessage::Routed(routed_msg) => {
+                                        match &routed_msg.body {
+                                            RoutedMessageBody::PartialEncodedChunkRequest(_) |
+                                            RoutedMessageBody::PartialEncodedChunkResponse(_) |
+                                            RoutedMessageBody::PartialEncodedChunk(_) |
+                                            RoutedMessageBody::VersionedPartialEncodedChunk(_) |
+                                            RoutedMessageBody::PartialEncodedChunkForward(_) => {
+                                                info!("EVENT_TYPE_ID=777  Message {:?} took {}ms to send.", routed_msg.body, duration_ms);
+                                            }
+                                            _ => (),
+                                        }
+                                    }
+                                    _ => (),
+                                };
+                                actix::fut::ready(())
+                            })
+                    );
+                } else {
+                    ctx.wait(actix::fut::wrap_future(crate::types::TcpMagic::write_with(writer, bytes)));
+                }
             }
             Err(err) => error!(target: "network", "Error converting message to bytes: {}", err),
         };
@@ -1014,23 +1045,7 @@ impl Handler<SendMessage> for Peer {
     fn handle(&mut self, msg: SendMessage, ctx: &mut Self::Context) {
         #[cfg(feature = "delay_detector")]
         let _d = DelayDetector::new("send message".into());
-        self.send_message(&msg.message, ctx);
-        let duration_ms = msg.message.time_since_stamp().as_millis();
-        match msg.message.as_ref() {
-            PeerMessage::Routed(routed_msg) => {
-                match &routed_msg.body {
-                    RoutedMessageBody::PartialEncodedChunkRequest(_) |
-                    RoutedMessageBody::PartialEncodedChunkResponse(_) |
-                    RoutedMessageBody::PartialEncodedChunk(_) |
-                    RoutedMessageBody::VersionedPartialEncodedChunk(_) |
-                    RoutedMessageBody::PartialEncodedChunkForward(_) => {
-                        info!("EVENT_TYPE_ID=777  Message {:?} took {}ms to send.", routed_msg.body, duration_ms);
-                    }
-                    _ => (),
-                }
-            }
-            _ => (),
-        };
+        self.send_stamped_message(msg.message, ctx);
     }
 }
 

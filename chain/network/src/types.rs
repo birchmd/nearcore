@@ -57,6 +57,20 @@ pub const ROUTED_MESSAGE_TTL: u8 = 100;
 /// Peer and PeerManager.
 pub const UPDATE_INTERVAL_LAST_TIME_RECEIVED_MESSAGE: Duration = Duration::from_secs(60);
 
+pub enum MaybeStamped<'a, T> {
+    NotStamped(&'a T),
+    YesStamped(Stamped<T>)
+}
+
+impl <'a, T> MaybeStamped<'a, T> {
+    pub fn as_ref(&self) -> &T {
+        match self {
+            Self::NotStamped(t) => t,
+            Self::YesStamped(st) => st.as_ref(),
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Stamped<T> {
     data: T,
