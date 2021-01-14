@@ -80,7 +80,8 @@ impl Decoder for Codec {
             let now_ms = now.duration_since(UNIX_EPOCH).unwrap().as_millis();
             let dt = now_ms.saturating_sub(timestamp);
             if dt > 1000 {
-                warn!("A message took {}ms from encode to decode", dt);
+                let buf_size = buf.len();
+                warn!("A message took {}ms from encode to decode. Current buffer size: {}", dt, buf_size);
             }
 
             let res = Some(Ok(buf[HEADER_SIZE..message_end].to_vec()));
