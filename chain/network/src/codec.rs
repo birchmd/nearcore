@@ -1,12 +1,15 @@
 use std::io::{Error, ErrorKind};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use borsh::{BorshDeserialize, BorshSerialize};
 use bytes::{Buf, BufMut, BytesMut};
+use log::warn;
 use tokio_util::codec::{Decoder, Encoder};
 
 use crate::types::{PeerMessage, ReasonForBan};
 
 const NETWORK_MESSAGE_MAX_SIZE: u32 = 512 << 20; // 512MB
+const HEADER_SIZE: usize = 20; // 4-byte size + 16-byte timestamp
 
 pub struct Codec {
     max_length: u32,
@@ -27,9 +30,12 @@ impl Encoder for Codec {
         if item.len() > self.max_length as usize {
             Err(Error::new(ErrorKind::InvalidInput, "Input is too long"))
         } else {
+            let now = SystemTime::now();
+            let timestamp = now.duration_since(UNIX_EPOCH).unwrap().as_millis();
             // First four bytes is the length of the buffer.
-            buf.reserve(item.len() + 4);
+            buf.reserve(item.len() + HEADER_SIZE);
             buf.put_u32_le(item.len() as u32);
+            buf.put_u128_le(timestamp);
             buf.put(&item[..]);
             Ok(())
         }
@@ -41,26 +47,44 @@ impl Decoder for Codec {
     type Error = Error;
 
     fn decode(&mut self, buf: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-        if buf.len() < 4 {
+        if buf.len() < HEADER_SIZE {
             // not enough bytes to start decoding
             return Ok(None);
         }
 
-        let mut len_bytes: [u8; 4] = [0; 4];
-        len_bytes.copy_from_slice(&buf[0..4]);
-        let len = u32::from_le_bytes(len_bytes);
+        let len = {
+            let mut len_bytes: [u8; 4] = [0; 4];
+            len_bytes.copy_from_slice(&buf[0..4]);
+            u32::from_le_bytes(len_bytes)
+        };
 
         if len > self.max_length {
             // If this point is reached, abusive peer is banned.
             return Ok(Some(Err(ReasonForBan::Abusive)));
         }
 
-        if buf.len() < 4 + len as usize {
+        // time in ms since unix epoch
+        let timestamp = {
+            let mut t_bytes: [u8; 16] = [0; 16];
+            t_bytes.copy_from_slice(&buf[4..20]);
+            u128::from_le_bytes(t_bytes)
+        };
+
+        let message_end = HEADER_SIZE + (len as usize);
+        if buf.len() < message_end {
             // not enough bytes, keep waiting
             Ok(None)
         } else {
-            let res = Some(Ok(buf[4..4 + len as usize].to_vec()));
-            buf.advance(4 + len as usize);
+            // print how long it took to get this message if it was longer than 1s
+            let now = SystemTime::now();
+            let now_ms = now.duration_since(UNIX_EPOCH).unwrap().as_millis();
+            let dt = now_ms.saturating_sub(timestamp);
+            if dt > 1000 {
+                warn!("A message took {}ms from encode to decode", dt);
+            }
+
+            let res = Some(Ok(buf[HEADER_SIZE..message_end].to_vec()));
+            buf.advance(message_end);
             Ok(res)
         }
     }
