@@ -441,7 +441,7 @@ impl PeerManagerActor {
 
             // TODO: check if peer is banned or known based on IP address and port.
             Peer::add_stream(
-                FramedRead::new(read, Codec::new())
+                FramedRead::new(read, Codec::with_remote(remote_addr))
                     .take_while(|x| match x {
                         Ok(_) => future::ready(true),
                         Err(e) => {

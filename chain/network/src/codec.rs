@@ -1,9 +1,9 @@
 use std::io::{Error, ErrorKind};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use borsh::{BorshDeserialize, BorshSerialize};
 use bytes::{Buf, BufMut, BytesMut};
-use log::warn;
+use log::{info, warn};
 use tokio_util::codec::{Decoder, Encoder};
 
 use crate::types::{PeerMessage, ReasonForBan};
@@ -13,12 +13,26 @@ const HEADER_SIZE: usize = 20; // 4-byte size + 16-byte timestamp
 
 pub struct Codec {
     max_length: u32,
+    last_log_time: Instant,
+    remote_addr: Option<std::net::SocketAddr>,
 }
 
 #[allow(clippy::new_without_default)]
 impl Codec {
     pub fn new() -> Self {
-        Codec { max_length: NETWORK_MESSAGE_MAX_SIZE }
+        Codec {
+            max_length: NETWORK_MESSAGE_MAX_SIZE,
+            last_log_time: Instant::now(),
+            remote_addr: None,
+        }
+    }
+
+    pub fn with_remote(remote_addr: std::net::SocketAddr) -> Self {
+        Codec {
+            max_length: NETWORK_MESSAGE_MAX_SIZE,
+            last_log_time: Instant::now(),
+            remote_addr: Some(remote_addr),
+        }
     }
 }
 
@@ -47,6 +61,13 @@ impl Decoder for Codec {
     type Error = Error;
 
     fn decode(&mut self, buf: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+        if self.last_log_time.elapsed().as_millis() > 1000 {
+            self.last_log_time = Instant::now();
+            if let Some(remote_addr) = self.remote_addr {
+                info!("BUFFER_PING buf_size={} remote_addr={}", buf.len(), remote_addr);
+            }
+        }
+
         if buf.len() < HEADER_SIZE {
             // not enough bytes to start decoding
             return Ok(None);
@@ -79,12 +100,16 @@ impl Decoder for Codec {
             let now = SystemTime::now();
             let now_ms = now.duration_since(UNIX_EPOCH).unwrap().as_millis();
             let dt = now_ms.saturating_sub(timestamp);
+
+            let msg_bytes = buf[HEADER_SIZE..message_end].to_vec();
+
             if dt > 1000 {
                 let buf_size = buf.len();
-                warn!("A message took {}ms from encode to decode. Current buffer size: {}", dt, buf_size);
+                let msg = bytes_to_peer_message(&msg_bytes);
+                warn!("MESSAGE_DELAY delay={}ms buf_size={} remote_addr={} msg={:?}", dt, buf_size, self.remote_addr.unwrap(), msg);
             }
 
-            let res = Some(Ok(buf[HEADER_SIZE..message_end].to_vec()));
+            let res = Some(Ok(msg_bytes));
             buf.advance(message_end);
             Ok(res)
         }
