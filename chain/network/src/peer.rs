@@ -607,7 +607,7 @@ impl Actor for Peer {
     type Context = Context<Peer>;
 
     fn started(&mut self, ctx: &mut Self::Context) {
-        ctx.set_mailbox_capacity(10_000);
+        ctx.set_mailbox_capacity(500_000);
 
         near_metrics::inc_gauge(&metrics::PEER_CONNECTIONS_TOTAL);
         // Fetch genesis hash from the client.

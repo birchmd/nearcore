@@ -170,7 +170,7 @@ impl Actor for ClientActor {
     type Context = Context<Self>;
 
     fn started(&mut self, ctx: &mut Self::Context) {
-        ctx.set_mailbox_capacity(10_000);
+        ctx.set_mailbox_capacity(500_000);
 
         // Start syncing job.
         self.start_sync(ctx);
