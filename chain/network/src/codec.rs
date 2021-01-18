@@ -14,6 +14,7 @@ const HEADER_SIZE: usize = 20; // 4-byte size + 16-byte timestamp
 pub struct Codec {
     max_length: u32,
     last_log_time: Instant,
+    bytes_read: usize,
     remote_addr: Option<std::net::SocketAddr>,
 }
 
@@ -23,6 +24,7 @@ impl Codec {
         Codec {
             max_length: NETWORK_MESSAGE_MAX_SIZE,
             last_log_time: Instant::now(),
+            bytes_read: 0,
             remote_addr: None,
         }
     }
@@ -31,6 +33,7 @@ impl Codec {
         Codec {
             max_length: NETWORK_MESSAGE_MAX_SIZE,
             last_log_time: Instant::now(),
+            bytes_read: 0,
             remote_addr: Some(remote_addr),
         }
     }
@@ -61,10 +64,13 @@ impl Decoder for Codec {
     type Error = Error;
 
     fn decode(&mut self, buf: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-        if self.last_log_time.elapsed().as_millis() > 1000 {
+        let ms_since_last_log = self.last_log_time.elapsed().as_millis() as usize;
+        if ms_since_last_log > 1000 {
+            let read_rate = self.bytes_read / ms_since_last_log;
+            self.bytes_read = 0;
             self.last_log_time = Instant::now();
             if let Some(remote_addr) = self.remote_addr {
-                info!("BUFFER_PING buf_size={} remote_addr={}", buf.len(), remote_addr);
+                info!("BUFFER_PING buf_size={} remote_addr={} read_rate={}", buf.len(), remote_addr, read_rate);
             }
         }
 
@@ -111,6 +117,7 @@ impl Decoder for Codec {
 
             let res = Some(Ok(msg_bytes));
             buf.advance(message_end);
+            self.bytes_read += message_end;
             Ok(res)
         }
     }
