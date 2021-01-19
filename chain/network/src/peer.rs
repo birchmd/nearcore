@@ -405,9 +405,20 @@ impl Peer {
             }
         };
 
-        self.view_client_addr
-            .send(view_client_message)
-            .into_actor(self)
+        let now = Instant::now();
+        let x = self.view_client_addr.send(view_client_message);
+        let d = now.elapsed().as_millis();
+        if d > 50 {
+            warn!("send call from peer to view_client took {}", d);
+        }
+        let now = Instant::now();
+        let y = x.into_actor(self);
+        let d = now.elapsed().as_millis();
+        if d > 50 {
+            warn!("Future to actor conversion took {}", d);
+        }
+        let now = Instant::now();
+        let z = y
             .then(move |res, act, _ctx| {
                 // Ban peer if client thinks received data is bad.
                 match res {
@@ -457,8 +468,17 @@ impl Peer {
                     _ => {}
                 };
                 actix::fut::ready(())
-            })
-            .spawn(ctx);
+            });
+        let d = now.elapsed().as_millis();
+        if d > 50 {
+            warn!("Adding continuation to future took {}", d);
+        }
+        let now = Instant::now();
+        z.spawn(ctx);
+        let d = now.elapsed().as_millis();
+        if d > 50 {
+            warn!("spawning future to context took {}", d);
+        }
     }
 
     /// Process non handshake/peer related messages.
