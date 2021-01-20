@@ -1009,9 +1009,9 @@ impl StreamHandler<Result<Vec<u8>, ReasonForBan>> for Peer {
                 trace!(target: "network", "Received routed message from {} to {:?}.", self.peer_info, routed_message.target);
 
                 // Receive invalid routed message from peer.
-                if !routed_message.verify() {
-                    self.ban_peer(ctx, ReasonForBan::InvalidSignature);
-                } else {
+                //if !routed_message.verify() {
+                //    self.ban_peer(ctx, ReasonForBan::InvalidSignature);
+                //} else {
                     self.peer_manager_addr
                         .send(RoutedMessageFrom {
                             msg: routed_message.clone(),
@@ -1025,7 +1025,7 @@ impl StreamHandler<Result<Vec<u8>, ReasonForBan>> for Peer {
                             actix::fut::ready(())
                         })
                         .spawn(ctx);
-                }
+                //}
             }
             (_, PeerStatus::Ready, msg) => {
                 self.receive_message(ctx, msg);
