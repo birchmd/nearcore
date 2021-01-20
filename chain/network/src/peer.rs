@@ -409,13 +409,13 @@ impl Peer {
         let x = self.view_client_addr.send(view_client_message);
         let d = now.elapsed().as_millis();
         if d > 50 {
-            warn!("send call from peer to view_client took {}", d);
+            warn!("BLOCKING send call from peer to view_client took {}", d);
         }
         let now = Instant::now();
         let y = x.into_actor(self);
         let d = now.elapsed().as_millis();
         if d > 50 {
-            warn!("Future to actor conversion took {}", d);
+            warn!("BLOCKING Future to actor conversion took {}", d);
         }
         let now = Instant::now();
         let z = y
@@ -471,13 +471,13 @@ impl Peer {
             });
         let d = now.elapsed().as_millis();
         if d > 50 {
-            warn!("Adding continuation to future took {}", d);
+            warn!("BLOCKING Adding continuation to future took {}", d);
         }
         let now = Instant::now();
         z.spawn(ctx);
         let d = now.elapsed().as_millis();
         if d > 50 {
-            warn!("spawning future to context took {}", d);
+            warn!("BLOCKING spawning future to context took {}", d);
         }
     }
 
