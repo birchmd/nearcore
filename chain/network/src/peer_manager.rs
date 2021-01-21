@@ -152,7 +152,6 @@ pub struct PeerManagerActor {
     txns_since_last_block: Arc<AtomicUsize>,
     pending_incoming_connections_counter: Arc<AtomicUsize>,
     peer_counter: Arc<AtomicUsize>,
-    borshifier: Addr<crate::borshify::BorshActor>,
 }
 
 impl PeerManagerActor {
@@ -195,7 +194,6 @@ impl PeerManagerActor {
             txns_since_last_block,
             pending_incoming_connections_counter: Arc::new(AtomicUsize::new(0)),
             peer_counter: Arc::new(AtomicUsize::new(0)),
-            borshifier: crate::borshify::BorshActor::start(),
         })
     }
 
@@ -437,7 +435,6 @@ impl PeerManagerActor {
         let arbiter = Arbiter::new();
         let peer_counter = self.peer_counter.clone();
         peer_counter.fetch_add(1, Ordering::SeqCst);
-        let borshifier = self.borshifier.clone();
 
         Peer::start_in_arbiter(&arbiter, move |ctx| {
             let (read, write) = tokio::io::split(stream);
@@ -470,7 +467,6 @@ impl PeerManagerActor {
                 network_metrics,
                 txns_since_last_block,
                 peer_counter,
-                borshifier,
             )
         });
     }

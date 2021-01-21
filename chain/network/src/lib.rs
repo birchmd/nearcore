@@ -7,7 +7,6 @@ pub use types::{
     NetworkRecipient, NetworkRequests, NetworkResponses, PeerInfo,
 };
 
-mod borshify;
 mod cache;
 mod codec;
 pub mod metrics;
