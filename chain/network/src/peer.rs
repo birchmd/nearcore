@@ -12,6 +12,7 @@ use actix::{
     Actor, ActorContext, ActorFuture, Addr, Arbiter, AsyncContext, Context, ContextFutureSpawner,
     Handler, Recipient, Running, StreamHandler, WrapFuture,
 };
+use cached::{Cached, TimedCache};
 use tracing::{debug, error, info, trace, warn};
 
 use near_metrics;
@@ -59,6 +60,10 @@ const MAX_PEER_MSG_PER_MIN: u64 = std::u64::MAX;
 /// The purpose of this constant is to ensure we do not spend too much time deserializing and
 /// dispatching transactions when we should be focusing on consensus-related messages.
 const MAX_TXNS_PER_BLOCK_MESSAGE: usize = 1000;
+
+/// Time during which we will ignore duplicate messages (i.e. we assume we received already and
+/// performed the necessary action).
+const IDEMPOTENT_SECONDS: u64 = 5 * 60; // 5 minutes
 
 /// Internal structure to keep a circular queue within a tracker with unique hashes.
 struct CircularUniqueQueue {
@@ -182,6 +187,8 @@ pub struct Peer {
     txns_since_last_block: Arc<AtomicUsize>,
     /// How many peer actors are created
     peer_counter: Arc<AtomicUsize>,
+    /// cache keeping track of messages we recieved recently
+    recent_messages: TimedCache<CryptoHash, ()>,
 }
 
 impl Peer {
@@ -220,6 +227,7 @@ impl Peer {
             network_metrics,
             txns_since_last_block,
             peer_counter,
+            recent_messages: TimedCache::with_lifespan(IDEMPOTENT_SECONDS),
         }
     }
 
@@ -710,6 +718,15 @@ impl StreamHandler<Result<Vec<u8>, ReasonForBan>> for Peer {
                 return;
             }
         }
+        // We purposely choose to detect duplicate message at this point
+        // (i.e. before deserialization) to prevent as much unnecessary work
+        // as possible.
+        let bytes_hash = near_primitives::hash::hash(&msg);
+        if self.recent_messages.cache_get(&bytes_hash).is_some() {
+            // This is a duplicate message -- ignore
+            return;
+        }
+        self.recent_messages.cache_set(bytes_hash, ());
         let mut peer_msg = match bytes_to_peer_message(&msg) {
             Ok(peer_msg) => peer_msg,
             Err(err) => {
