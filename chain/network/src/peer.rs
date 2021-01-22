@@ -63,7 +63,7 @@ const MAX_TXNS_PER_BLOCK_MESSAGE: usize = 1000;
 
 /// Time during which we will ignore duplicate messages (i.e. we assume we received already and
 /// performed the necessary action).
-const IDEMPOTENT_SECONDS: u64 = 5 * 60; // 5 minutes
+const IDEMPOTENT_SECONDS: u64 = 1 * 60; // 1 minute
 
 /// Internal structure to keep a circular queue within a tracker with unique hashes.
 struct CircularUniqueQueue {
@@ -188,7 +188,7 @@ pub struct Peer {
     /// How many peer actors are created
     peer_counter: Arc<AtomicUsize>,
     /// cache keeping track of messages we recieved recently
-    recent_messages: TimedCache<CryptoHash, ()>,
+    recent_messages: TimedCache<Vec<u8>, ()>,
 }
 
 impl Peer {
@@ -708,7 +708,6 @@ impl StreamHandler<Result<Vec<u8>, ReasonForBan>> for Peer {
         near_metrics::inc_counter_by(&metrics::PEER_DATA_RECEIVED_BYTES, msg.len() as i64);
         near_metrics::inc_counter(&metrics::PEER_MESSAGE_RECEIVED_TOTAL);
 
-        #[cfg(feature = "metric_recorder")]
         let msg_size = msg.len();
 
         self.tracker.increment_received(msg.len() as u64);
@@ -721,12 +720,10 @@ impl StreamHandler<Result<Vec<u8>, ReasonForBan>> for Peer {
         // We purposely choose to detect duplicate message at this point
         // (i.e. before deserialization) to prevent as much unnecessary work
         // as possible.
-        let bytes_hash = near_primitives::hash::hash(&msg);
-        if self.recent_messages.cache_get(&bytes_hash).is_some() {
+        if self.recent_messages.cache_get(&msg).is_some() {
             // This is a duplicate message -- ignore
             return;
         }
-        self.recent_messages.cache_set(bytes_hash, ());
         let mut peer_msg = match bytes_to_peer_message(&msg) {
             Ok(peer_msg) => peer_msg,
             Err(err) => {
@@ -757,6 +754,7 @@ impl StreamHandler<Result<Vec<u8>, ReasonForBan>> for Peer {
                 return;
             }
         };
+        self.recent_messages.cache_set(msg, ());
         if let PeerMessage::Routed(RoutedMessage {
             body: RoutedMessageBody::ForwardTx(_), ..
         }) = &peer_msg
@@ -788,7 +786,7 @@ impl StreamHandler<Result<Vec<u8>, ReasonForBan>> for Peer {
 
         self.network_metrics.inc_by(
             NetworkMetrics::peer_message_bytes_rx(&peer_msg.msg_variant()).as_ref(),
-            msg.len() as i64,
+            msg_size as i64,
         );
 
         if let PeerMessage::HandshakeV2(handshake) = peer_msg {
