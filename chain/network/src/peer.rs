@@ -262,7 +262,7 @@ impl Peer {
             Ok(bytes) => {
                 #[cfg(feature = "metric_recorder")]
                 self.peer_manager_addr.do_send(metadata.set_size(bytes.len()));
-                // self.tracker.increment_sent(bytes.len() as u64);
+                self.tracker.increment_sent(bytes.len() as u64);
                 self.framed.write(bytes);
             }
             Err(err) => error!(target: "network", "Error converting message to bytes: {}", err),
@@ -711,7 +711,7 @@ impl StreamHandler<Result<Vec<u8>, ReasonForBan>> for Peer {
         #[cfg(feature = "metric_recorder")]
         let msg_size = msg.len();
 
-        // self.tracker.increment_received(msg.len() as u64);
+        self.tracker.increment_received(msg.len() as u64);
         if codec::is_forward_tx(&msg).unwrap_or(false) {
             let r = self.txns_since_last_block.load(Ordering::Acquire);
             if r > MAX_TXNS_PER_BLOCK_MESSAGE {
