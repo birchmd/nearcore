@@ -48,6 +48,8 @@ use metrics::NetworkMetrics;
 use near_performance_metrics_macros::perf;
 use near_primitives::sharding::PartialEncodedChunk;
 
+use xxhash_rust::xxh3;
+
 type WriteHalf = tokio::io::WriteHalf<tokio::net::TcpStream>;
 
 /// Maximum number of requests and responses to track.
@@ -187,8 +189,8 @@ pub struct Peer {
     txns_since_last_block: Arc<AtomicUsize>,
     /// How many peer actors are created
     peer_counter: Arc<AtomicUsize>,
-    /// cache keeping track of messages we recieved recently
-    recent_messages: TimedCache<Vec<u8>, ()>,
+    /// cache keeping track of messages we received recently
+    recent_messages: TimedCache<u64, ()>,
 }
 
 impl Peer {
@@ -720,10 +722,12 @@ impl StreamHandler<Result<Vec<u8>, ReasonForBan>> for Peer {
         // We purposely choose to detect duplicate message at this point
         // (i.e. before deserialization) to prevent as much unnecessary work
         // as possible.
-        if self.recent_messages.cache_get(&msg).is_some() {
+        let msg_hash = xxh3::xxh3_64(&msg);
+        if self.recent_messages.cache_get(&msg_hash).is_some() {
             // This is a duplicate message -- ignore
             return;
         }
+        self.recent_messages.cache_set(msg_hash, ());
         let mut peer_msg = match bytes_to_peer_message(&msg) {
             Ok(peer_msg) => peer_msg,
             Err(err) => {
@@ -754,7 +758,6 @@ impl StreamHandler<Result<Vec<u8>, ReasonForBan>> for Peer {
                 return;
             }
         };
-        self.recent_messages.cache_set(msg, ());
         if let PeerMessage::Routed(RoutedMessage {
             body: RoutedMessageBody::ForwardTx(_), ..
         }) = &peer_msg
