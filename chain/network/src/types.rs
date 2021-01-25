@@ -608,12 +608,12 @@ impl RawRoutedMessage {
     pub fn sign(
         self,
         author: PeerId,
-        secret_key: &SecretKey,
+        _secret_key: &SecretKey,
         routed_message_ttl: u8,
     ) -> RoutedMessage {
         let target = self.target.peer_id_or_hash().unwrap();
-        let hash = RoutedMessage::build_hash(&target, &author, &self.body);
-        let signature = secret_key.sign(hash.as_ref());
+        // let hash = RoutedMessage::build_hash(&target, &author, &self.body);
+        let signature = Signature::default(); // secret_key.sign(hash.as_ref());
         RoutedMessage { target, author, signature, ttl: routed_message_ttl, body: self.body }
     }
 }
