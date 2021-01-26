@@ -5,7 +5,7 @@ authors = ["Near Inc <hello@nearprotocol.com>"]
 edition = "2018"
 
 [dependencies]
-actix = "0.9"
+actix = "0.10"
 actix-web = "2"
 actix-cors = "0.2"
 tokio = { version = "0.2", features = ["full"] }

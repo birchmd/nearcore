@@ -6,7 +6,7 @@ edition = "2018"
 
 [dependencies]
 ansi_term = "0.11"
-actix = "0.9"
+actix = "0.10"
 futures = "0.3"
 chrono = { version = "0.4.4", features = ["serde"] }
 rocksdb = { git = "https://github.com/nearprotocol/rust-rocksdb", branch="disable-thread" }

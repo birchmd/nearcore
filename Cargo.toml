@@ -54,7 +54,7 @@ openssl-probe = { version = "0.1.2" }
 syn = "=1.0.57"
 
 [dev-dependencies]
-actix = "0.9"
+actix = "0.10"
 lazy_static = "1.4"
 log = "^0.4.6"
 rand = "0.7"

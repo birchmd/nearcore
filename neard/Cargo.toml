@@ -6,7 +6,7 @@ edition = "2018"
 default-run = "neard"
 
 [dependencies]
-actix = "0.9"
+actix = "0.10"
 actix-web = { version = "2", features = [ "openssl" ] }
 byteorder = "1.2"
 easy-ext = "0.2"
