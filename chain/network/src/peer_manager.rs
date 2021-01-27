@@ -152,6 +152,7 @@ pub struct PeerManagerActor {
     txns_since_last_block: Arc<AtomicUsize>,
     pending_incoming_connections_counter: Arc<AtomicUsize>,
     peer_counter: Arc<AtomicUsize>,
+    logger: Addr<crate::logger::Logger>,
 }
 
 impl PeerManagerActor {
@@ -174,6 +175,8 @@ impl PeerManagerActor {
         let metric_recorder = MetricRecorder::default().set_me(me.clone());
 
         let txns_since_last_block = Arc::new(AtomicUsize::new(0));
+        let logger_thread = Arbiter::new();
+        let logger = crate::logger::Logger::start_in_arbiter(&logger_thread, |_| crate::logger::Logger::default());
 
         Ok(PeerManagerActor {
             peer_id: me,
@@ -194,6 +197,7 @@ impl PeerManagerActor {
             txns_since_last_block,
             pending_incoming_connections_counter: Arc::new(AtomicUsize::new(0)),
             peer_counter: Arc::new(AtomicUsize::new(0)),
+            logger,
         })
     }
 
@@ -435,13 +439,16 @@ impl PeerManagerActor {
         let arbiter = Arbiter::new();
         let peer_counter = self.peer_counter.clone();
         peer_counter.fetch_add(1, Ordering::SeqCst);
+        let logger = self.logger.clone();
 
         Peer::start_in_arbiter(&arbiter, move |ctx| {
             let (read, write) = tokio::io::split(stream);
+            let r_logger = logger.clone();
+            let w_logger = logger.clone();
 
             // TODO: check if peer is banned or known based on IP address and port.
             Peer::add_stream(
-                FramedRead::new(read, Codec::new())
+                FramedRead::new(read, Codec::with_logger(r_logger, remote_addr))
                     .take_while(|x| match x {
                         Ok(_) => future::ready(true),
                         Err(e) => {
@@ -458,7 +465,7 @@ impl PeerManagerActor {
                 remote_addr,
                 peer_info,
                 peer_type,
-                FramedWrite::new(write, Codec::new(), ctx),
+                FramedWrite::new(write, Codec::with_logger(w_logger, remote_addr), ctx),
                 handshake_timeout,
                 recipient,
                 client_addr,
@@ -467,6 +474,7 @@ impl PeerManagerActor {
                 network_metrics,
                 txns_since_last_block,
                 peer_counter,
+                logger,
             )
         });
     }

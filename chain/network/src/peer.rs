@@ -182,6 +182,8 @@ pub struct Peer {
     txns_since_last_block: Arc<AtomicUsize>,
     /// How many peer actors are created
     peer_counter: Arc<AtomicUsize>,
+    logger: Addr<crate::logger::Logger>,
+    stream_handler_id: u64,
 }
 
 impl Peer {
@@ -199,6 +201,7 @@ impl Peer {
         network_metrics: NetworkMetrics,
         txns_since_last_block: Arc<AtomicUsize>,
         peer_counter: Arc<AtomicUsize>,
+        logger: Addr<crate::logger::Logger>,
     ) -> Self {
         Peer {
             node_info,
@@ -220,6 +223,8 @@ impl Peer {
             network_metrics,
             txns_since_last_block,
             peer_counter,
+            logger,
+            stream_handler_id: 0,
         }
     }
 
@@ -257,7 +262,7 @@ impl Peer {
                 self.tracker.increment_sent(bytes.len() as u64);
                 self.framed.write(bytes);
             }
-            Err(err) => error!(target: "network", "Error converting message to bytes: {}", err),
+            Err(err) => self.logger.do_send(crate::logger::types::Message::ErrorConvertToBytes(err)),
         };
     }
 
@@ -272,7 +277,7 @@ impl Peer {
                         actix::fut::ready(())
                     }
                     Err(err) => {
-                        error!(target: "network", "Failed sending GetChain to client: {}", err);
+                        act.logger.do_send(crate::logger::types::Message::GetChainFailed(err));
                         actix::fut::ready(())
                     }
                     _ => actix::fut::ready(()),
@@ -282,7 +287,7 @@ impl Peer {
 
     fn send_handshake(&mut self, ctx: &mut Context<Peer>) {
         if self.peer_id().is_none() {
-            error!(target: "network", "Sending handshake to an unknown peer");
+            self.logger.do_send(crate::logger::types::Message::HandshakeToUnknownPeer);
             return;
         }
 
@@ -323,7 +328,7 @@ impl Peer {
                     actix::fut::ready(())
                 }
                 Err(err) => {
-                    error!(target: "network", "Failed sending GetChain to client: {}", err);
+                    act.logger.do_send(crate::logger::types::Message::GetChainFailed(err));
                     actix::fut::ready(())
                 }
                 _ => actix::fut::ready(()),
@@ -566,7 +571,8 @@ impl Peer {
                 // Ban peer if client thinks received data is bad.
                 match res {
                     Ok(NetworkClientResponses::InvalidTx(err)) => {
-                        warn!(target: "network", "Received invalid tx from peer {}: {}", act.peer_info, err);
+                        let peer_info: DisplayOption<PeerInfo> = DisplayOption(act.peer_info.0.clone());
+                        act.logger.do_send(crate::logger::types::Message::InvalidTx(peer_info, err));
                         // TODO: count as malicious behavior?
                     }
                     Ok(NetworkClientResponses::Ban { ban_reason }) => {
@@ -600,6 +606,20 @@ impl Peer {
                 ));
             }
         }
+    }
+
+    fn log_stream_handler_message(&mut self, start: Instant) {
+        let call_id = self.stream_handler_id;
+        self.stream_handler_id += 1;
+        let end = Instant::now();
+        let msg = crate::logger::types::Message::FnCall {
+            fn_type: crate::logger::types::FnType::StreamHandler,
+            start,
+            end,
+            call_id,
+            remote_addr: self.peer_addr,
+        };
+        self.logger.do_send(msg);
     }
 }
 
@@ -667,10 +687,12 @@ impl WriteHandler<io::Error> for Peer {}
 impl StreamHandler<Result<Vec<u8>, ReasonForBan>> for Peer {
     #[perf]
     fn handle(&mut self, msg: Result<Vec<u8>, ReasonForBan>, ctx: &mut Self::Context) {
+        let start = Instant::now();
         let msg = match msg {
             Ok(msg) => msg,
             Err(ban_reason) => {
                 self.ban_peer(ctx, ban_reason);
+                self.log_stream_handler_message(start);
                 return ();
             }
         };
@@ -685,6 +707,7 @@ impl StreamHandler<Result<Vec<u8>, ReasonForBan>> for Peer {
         if codec::is_forward_tx(&msg).unwrap_or(false) {
             let r = self.txns_since_last_block.load(Ordering::Acquire);
             if r > MAX_TXNS_PER_BLOCK_MESSAGE {
+                self.log_stream_handler_message(start);
                 return;
             }
         }
@@ -715,6 +738,7 @@ impl StreamHandler<Result<Vec<u8>, ReasonForBan>> for Peer {
                 } else {
                     info!(target: "network", "Received invalid data {:?} from {}: {}", msg, self.peer_info, err);
                 }
+                self.log_stream_handler_message(start);
                 return;
             }
         };
@@ -777,6 +801,7 @@ impl StreamHandler<Result<Vec<u8>, ReasonForBan>> for Peer {
                             // Use target_version as protocol_version to talk with this peer
                             self.protocol_version = target_version;
                             self.send_handshake(ctx);
+                            self.log_stream_handler_message(start);
                             return;
                         } else {
                             warn!(target: "network", "Unable to connect to a node ({}) due to a network protocol version mismatch. Our version: {:?}, their: {:?}", peer_info, (PROTOCOL_VERSION, OLDEST_BACKWARD_COMPATIBLE_PROTOCOL_VERSION), (version, oldest_supported_version));
@@ -787,6 +812,7 @@ impl StreamHandler<Result<Vec<u8>, ReasonForBan>> for Peer {
                         self.peer_manager_addr.do_send(PeerRequest::UpdatePeerInfo(peer_info));
                     }
                 }
+                self.log_stream_handler_message(start);
                 ctx.stop();
             }
             (_, PeerStatus::Connecting, PeerMessage::Handshake(handshake)) => {
@@ -808,6 +834,7 @@ impl StreamHandler<Result<Vec<u8>, ReasonForBan>> for Peer {
                             HandshakeFailureReason::GenesisMismatch(self.genesis_id.clone()),
                         ),
                     });
+                    self.log_stream_handler_message(start);
                     return;
                     // Connection will be closed by a handshake timeout
                 }
@@ -815,6 +842,7 @@ impl StreamHandler<Result<Vec<u8>, ReasonForBan>> for Peer {
                 if handshake.peer_id == self.node_info.id {
                     near_metrics::inc_counter(&metrics::RECEIVED_INFO_ABOUT_ITSELF);
                     debug!(target: "network", "Received info about itself. Disconnecting this peer.");
+                    self.log_stream_handler_message(start);
                     ctx.stop();
                     return;
                 }
@@ -825,6 +853,7 @@ impl StreamHandler<Result<Vec<u8>, ReasonForBan>> for Peer {
                         self.node_info.clone(),
                         HandshakeFailureReason::InvalidTarget,
                     ));
+                    self.log_stream_handler_message(start);
                     return;
                     // Connection will be closed by a handshake timeout
                 }
@@ -837,6 +866,7 @@ impl StreamHandler<Result<Vec<u8>, ReasonForBan>> for Peer {
                 ) {
                     warn!(target: "network", "Received invalid signature on handshake. Disconnecting peer {}", handshake.peer_id);
                     self.ban_peer(ctx, ReasonForBan::InvalidSignature);
+                    self.log_stream_handler_message(start);
                     return;
                 }
 
@@ -847,6 +877,7 @@ impl StreamHandler<Result<Vec<u8>, ReasonForBan>> for Peer {
                     {
                         warn!(target: "network", "Received invalid nonce on handshake. Disconnecting peer {}", handshake.peer_id);
                         ctx.stop();
+                        self.log_stream_handler_message(start);
                         return;
                     }
                 }
@@ -899,6 +930,7 @@ impl StreamHandler<Result<Vec<u8>, ReasonForBan>> for Peer {
                 // This message will be received only if we started the connection.
                 if self.peer_type == PeerType::Inbound {
                     info!(target: "network", "{:?}: Inbound peer {:?} sent invalid message. Disconnect.", self.node_id(), self.peer_addr);
+                    self.log_stream_handler_message(start);
                     ctx.stop();
                     return ();
                 }
@@ -906,6 +938,7 @@ impl StreamHandler<Result<Vec<u8>, ReasonForBan>> for Peer {
                 // Disconnect if neighbor propose invalid edge.
                 if !edge.verify() {
                     info!(target: "network", "{:?}: Peer {:?} sent invalid edge. Disconnect.", self.node_id(), self.peer_addr);
+                    self.log_stream_handler_message(start);
                     ctx.stop();
                     return ();
                 }
@@ -927,6 +960,7 @@ impl StreamHandler<Result<Vec<u8>, ReasonForBan>> for Peer {
             }
             (_, PeerStatus::Ready, PeerMessage::Disconnect) => {
                 debug!(target: "network", "Disconnect signal. Me: {:?} Peer: {:?}", self.node_info.id, self.peer_id());
+                self.log_stream_handler_message(start);
                 ctx.stop();
             }
             (_, PeerStatus::Ready, PeerMessage::Handshake(_)) => {
@@ -1012,6 +1046,7 @@ impl StreamHandler<Result<Vec<u8>, ReasonForBan>> for Peer {
                 warn!(target: "network", "Received {} while {:?} from {:?} connection.", msg, self.peer_status, self.peer_type);
             }
         }
+        self.log_stream_handler_message(start);
     }
 }
 

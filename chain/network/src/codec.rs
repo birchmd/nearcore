@@ -10,12 +10,68 @@ const NETWORK_MESSAGE_MAX_SIZE: u32 = 512 << 20; // 512MB
 
 pub struct Codec {
     max_length: u32,
+    logger: Option<actix::Addr<crate::logger::Logger>>,
+    encode_id: u64,
+    decode_id: u64,
+    peer_addr: Option<std::net::SocketAddr>,
 }
 
 #[allow(clippy::new_without_default)]
 impl Codec {
     pub fn new() -> Self {
-        Codec { max_length: NETWORK_MESSAGE_MAX_SIZE }
+        Codec {
+            max_length: NETWORK_MESSAGE_MAX_SIZE,
+            logger: None,
+            encode_id: 0,
+            decode_id: 0,
+            peer_addr: None,
+        }
+    }
+
+    pub fn with_logger(logger: actix::Addr<crate::logger::Logger>, peer_addr: std::net::SocketAddr) -> Self {
+        Codec {
+            max_length: NETWORK_MESSAGE_MAX_SIZE,
+            logger: Some(logger),
+            encode_id: 0,
+            decode_id: 0,
+            peer_addr: Some(peer_addr),
+        }
+    }
+
+    fn log_call_message(&mut self, start: std::time::Instant, fn_type: crate::logger::types::FnType) -> Option<()> {
+        let logger = self.logger.as_ref()?;
+        let remote_addr = self.peer_addr?;
+        let call_id = match fn_type {
+            crate::logger::types::FnType::Encode => {
+                let x = self.encode_id;
+                self.encode_id += 1;
+                x
+            }
+            crate::logger::types::FnType::Decode => {
+                let x = self.decode_id;
+                self.decode_id += 1;
+                x
+            }
+            _ => panic!("Should only be called with Encode or Decode"),
+        };
+        let end = std::time::Instant::now();
+        let msg = crate::logger::types::Message::FnCall {
+            fn_type,
+            start,
+            end,
+            call_id,
+            remote_addr,
+        };
+        logger.do_send(msg);
+        Some(())
+    }
+
+    fn log_encode_message(&mut self, start: std::time::Instant) {
+        self.log_call_message(start, crate::logger::types::FnType::Encode).unwrap_or_default()
+    }
+
+    fn log_decode_message(&mut self, start: std::time::Instant) {
+        self.log_call_message(start, crate::logger::types::FnType::Decode).unwrap_or_default()
     }
 }
 
@@ -24,13 +80,16 @@ impl Encoder for Codec {
     type Error = Error;
 
     fn encode(&mut self, item: Self::Item, buf: &mut BytesMut) -> Result<(), Error> {
+        let start = std::time::Instant::now();
         if item.len() > self.max_length as usize {
+            self.log_encode_message(start);
             Err(Error::new(ErrorKind::InvalidInput, "Input is too long"))
         } else {
             // First four bytes is the length of the buffer.
             buf.reserve(item.len() + 4);
             buf.put_u32_le(item.len() as u32);
             buf.put(&item[..]);
+            self.log_encode_message(start);
             Ok(())
         }
     }
@@ -41,8 +100,10 @@ impl Decoder for Codec {
     type Error = Error;
 
     fn decode(&mut self, buf: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+        let start = std::time::Instant::now();
         if buf.len() < 4 {
             // not enough bytes to start decoding
+            self.log_decode_message(start);
             return Ok(None);
         }
 
@@ -52,15 +113,18 @@ impl Decoder for Codec {
 
         if len > self.max_length {
             // If this point is reached, abusive peer is banned.
+            self.log_decode_message(start);
             return Ok(Some(Err(ReasonForBan::Abusive)));
         }
 
         if buf.len() < 4 + len as usize {
             // not enough bytes, keep waiting
+            self.log_decode_message(start);
             Ok(None)
         } else {
             let res = Some(Ok(buf[4..4 + len as usize].to_vec()));
             buf.advance(4 + len as usize);
+            self.log_decode_message(start);
             Ok(res)
         }
     }
