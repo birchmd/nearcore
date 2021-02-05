@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 use borsh::BorshSerialize;
 use cached::{Cached, SizedCache};
 use chrono::{DateTime, Utc};
-use log::{debug, error, warn};
+use log::{debug, error, info, warn};
 use rand::seq::SliceRandom;
 
 use near_chain::validate::validate_chunk_proofs;
@@ -422,7 +422,10 @@ impl ShardsManager {
     }
 
     pub fn get_pool_iterator(&mut self, shard_id: ShardId) -> Option<PoolIteratorWrapper<'_>> {
-        self.tx_pools.get_mut(&shard_id).map(|pool| pool.pool_iterator())
+        self.tx_pools.get_mut(&shard_id).map(|pool| {
+            info!("TXPOOL shard_id={} tx_pool_size={}", shard_id, pool.len());
+            pool.pool_iterator()
+        })
     }
 
     pub fn cares_about_shard_this_or_next_epoch(
