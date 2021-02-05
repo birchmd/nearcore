@@ -126,13 +126,13 @@ pub fn proposals_to_epoch_info(
         .collect::<Vec<_>>();
 
     assert!(dup_proposals.len() >= num_total_seats as usize, "bug in find_threshold");
-    {
+    /*{
         use protocol_defining_rand::seq::SliceRandom;
         use protocol_defining_rand::{rngs::StdRng, SeedableRng};
         // Shuffle duplicate proposals.
         let mut rng: StdRng = SeedableRng::from_seed(rng_seed);
         dup_proposals.shuffle(&mut rng);
-    }
+    }*/
 
     // Block producers are first `num_block_producer_seats` proposals.
     let mut block_producers_settlement =
