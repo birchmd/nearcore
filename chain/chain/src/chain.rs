@@ -2893,6 +2893,7 @@ impl<'a> ChainUpdate<'a> {
     where
         F: FnMut(ChallengeBody) -> (),
     {
+        let t = std::time::Instant::now();
         debug!(target: "chain", "Process block {} at {}, approvals: {}, me: {:?}", block.hash(), block.header().height(), block.header().num_approvals(), me);
 
         if block.chunks().len() != self.runtime_adapter.num_shards() as usize {
@@ -2938,6 +2939,8 @@ impl<'a> ChainUpdate<'a> {
             return Err(ErrorKind::Orphan.into());
         }
 
+        let d_1 = t.elapsed();
+        let t = std::time::Instant::now();
         // First real I/O expense.
         let prev = self.get_previous_header(block.header())?;
         let prev_hash = *prev.hash();
@@ -2969,9 +2972,13 @@ impl<'a> ChainUpdate<'a> {
             };
 
         debug!(target: "chain", "{:?} Process block {}, is_caught_up: {}, need_to_start_fetching_state: {}", me, block.hash(), is_caught_up, needs_to_start_fetching_state);
+        let d_2 = t.elapsed();
+        let t = std::time::Instant::now();
 
         // Check the header is valid before we proceed with the full block.
         self.process_header_for_block(block.header(), provenance, on_challenge)?;
+        let d_3 = t.elapsed();
+        let t = std::time::Instant::now();
 
         self.runtime_adapter.verify_block_vrf(
             &block.header().epoch_id(),
@@ -2980,6 +2987,9 @@ impl<'a> ChainUpdate<'a> {
             block.vrf_value(),
             block.vrf_proof(),
         )?;
+
+        let d_4 = t.elapsed();
+        let t = std::time::Instant::now();
 
         if block.header().random_value() != &hash(block.vrf_value().0.as_ref()) {
             return Err(ErrorKind::InvalidRandomnessBeaconOutput.into());
@@ -2991,6 +3001,9 @@ impl<'a> ChainUpdate<'a> {
             byzantine_assert!(false);
             return Err(e.into());
         }
+
+        let d_5 = t.elapsed();
+        let t = std::time::Instant::now();
 
         let protocol_version =
             self.runtime_adapter.get_epoch_protocol_version(&block.header().epoch_id())?;
@@ -3024,6 +3037,9 @@ impl<'a> ChainUpdate<'a> {
             }
         }
 
+        let d_6 = t.elapsed();
+        let t = std::time::Instant::now();
+
         // Always apply state transition for shards in the current epoch
         self.apply_chunks(me, block, &prev_block, ApplyChunksMode::ThisEpoch)?;
 
@@ -3034,6 +3050,9 @@ impl<'a> ChainUpdate<'a> {
         } else {
             self.chain_store_update.add_block_to_catchup(prev_hash, *block.hash());
         }
+
+        let d_7 = t.elapsed();
+        let t = std::time::Instant::now();
 
         // Verify that proposals from chunks match block header proposals.
         let mut all_chunk_proposals = vec![];
@@ -3090,6 +3109,12 @@ impl<'a> ChainUpdate<'a> {
                 }
             }
         }
+
+        let d_8 = t.elapsed();
+        let durations = [d_1, d_2, d_3, d_4, d_5, d_6, d_7, d_8];
+        let labels = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
+        let msg: String = durations.iter().zip(labels.iter()).map(|(d, l)| format!("{}={} ", l, d.as_micros())).collect();
+        info!("BLOCK_TIMING {}", msg);
 
         Ok((res, needs_to_start_fetching_state))
     }
