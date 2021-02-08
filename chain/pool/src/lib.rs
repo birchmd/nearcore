@@ -11,6 +11,8 @@ use std::ops::Bound;
 
 pub mod types;
 
+const MAX_POOL_SIZE: usize = 800;
+
 /// Transaction pool: keeps track of transactions that were not yet accepted into the block chain.
 pub struct TransactionPool {
     /// Transactions are grouped by a pair of (account ID, signer public key).
@@ -44,6 +46,9 @@ impl TransactionPool {
 
     /// Insert a signed transaction into the pool that passed validation.
     pub fn insert_transaction(&mut self, signed_transaction: SignedTransaction) -> bool {
+        if self.len() > MAX_POOL_SIZE {
+            return false;
+        }
         if !self.unique_transactions.insert(signed_transaction.get_hash()) {
             return false;
         }
