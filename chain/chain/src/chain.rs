@@ -2703,7 +2703,6 @@ impl<'a> ChainUpdate<'a> {
         prev_block: &Block,
         mode: ApplyChunksMode,
     ) -> Result<(), Error> {
-        let t = std::time::Instant::now();
         let challenges_result = self.verify_challenges(
             block.challenges(),
             block.header().epoch_id(),
@@ -2712,13 +2711,9 @@ impl<'a> ChainUpdate<'a> {
         )?;
         self.chain_store_update.save_block_extra(&block.hash(), BlockExtra { challenges_result });
 
-        let d_1 = t.elapsed();
-
         for (shard_id, (chunk_header, prev_chunk_header)) in
             (block.chunks().iter().zip(prev_block.chunks().iter())).enumerate()
         {
-            let t = std::time::Instant::now();
-
             let shard_id = shard_id as ShardId;
             let care_about_shard = match mode {
                 ApplyChunksMode::ThisEpoch => self.runtime_adapter.cares_about_shard(
@@ -2741,12 +2736,8 @@ impl<'a> ChainUpdate<'a> {
                     )
                 }
             };
-            let d_2 = t.elapsed();
-
             if care_about_shard {
                 if chunk_header.height_included() == block.header().height() {
-                    let t = std::time::Instant::now();
-
                     // Validate state root.
                     let prev_chunk_extra = self
                         .chain_store_update
@@ -2775,8 +2766,6 @@ impl<'a> ChainUpdate<'a> {
                             Err(err) => err,
                         }
                     })?;
-                    let d_3 = t.elapsed();
-                    let t = std::time::Instant::now();
 
                     let receipt_proof_response: Vec<ReceiptProofResponse> =
                         self.chain_store_update.get_incoming_receipts_for_shard(
@@ -2785,9 +2774,6 @@ impl<'a> ChainUpdate<'a> {
                             prev_chunk_header.height_included(),
                         )?;
                     let receipts = collect_receipts_from_response(&receipt_proof_response);
-
-                    let d_4 = t.elapsed();
-                    let t = std::time::Instant::now();
 
                     let chunk = self
                         .chain_store_update
@@ -2805,9 +2791,6 @@ impl<'a> ChainUpdate<'a> {
                             chunk_proof,
                         ))));
                     }
-
-                    let d_5 = t.elapsed();
-                    let t = std::time::Instant::now();
 
                     let chunk_inner = chunk.cloned_header().take_inner();
                     let gas_limit = chunk_inner.gas_limit;
@@ -2831,9 +2814,6 @@ impl<'a> ChainUpdate<'a> {
                             *block.header().random_value(),
                         )
                         .map_err(|e| ErrorKind::Other(e.to_string()))?;
-
-                    let d_6 = t.elapsed();
-                    let t = std::time::Instant::now();
 
                     let (outcome_root, outcome_paths) =
                         ApplyTransactionResult::compute_outcomes_proof(&apply_result.outcomes);
@@ -2864,13 +2844,6 @@ impl<'a> ChainUpdate<'a> {
                         apply_result.outcomes,
                         outcome_paths,
                     );
-
-                    let d_7 = t.elapsed();
-
-                    let durations = [d_1, d_2, d_3, d_4, d_5, d_6, d_7];
-                    let labels = ['a', 'b', 'c', 'd', 'e', 'f', 'g'];
-                    let msg: String = durations.iter().zip(labels.iter()).map(|(d, l)| format!("{}={} ", l, d.as_micros())).collect();
-                    info!("APPLY_CHUNKS_TIMING {}", msg);
                 } else {
                     let mut new_extra = self
                         .chain_store_update

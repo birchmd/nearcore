@@ -2,7 +2,7 @@ use std::cmp::max;
 use std::collections::{HashMap, HashSet};
 
 use borsh::BorshSerialize;
-use log::debug;
+use log::{debug, info};
 
 use near_crypto::PublicKey;
 use near_primitives::account::{AccessKey, Account};
@@ -1106,6 +1106,7 @@ impl Runtime {
         transactions: &[SignedTransaction],
         epoch_info_provider: &dyn EpochInfoProvider,
     ) -> Result<ApplyResult, RuntimeError> {
+        let t = std::time::Instant::now();
         let trie = Rc::new(trie);
         let initial_state = TrieUpdate::new(trie.clone(), root);
         let mut state_update = TrieUpdate::new(trie.clone(), root);
@@ -1126,6 +1127,9 @@ impl Runtime {
         let mut outcomes = vec![];
         let mut total_gas_burnt = 0;
 
+        let d_1 = t.elapsed().as_micros() as usize;
+        let t = std::time::Instant::now();
+
         for signed_transaction in transactions {
             let (receipt, outcome_with_id) = self.process_transaction(
                 &mut state_update,
@@ -1143,6 +1147,9 @@ impl Runtime {
 
             outcomes.push(outcome_with_id);
         }
+
+        let d_2 = (t.elapsed().as_micros() as usize) / (1 + transactions.len());
+        let t = std::time::Instant::now();
 
         let mut delayed_receipts_indices: DelayedReceiptIndices =
             get(&state_update, &TrieKey::DelayedReceiptIndices)?.unwrap_or_default();
@@ -1175,6 +1182,9 @@ impl Runtime {
 
         let gas_limit = apply_state.gas_limit.unwrap_or(Gas::max_value());
 
+        let d_3 = t.elapsed().as_micros() as usize;
+        let t = std::time::Instant::now();
+
         // We first process local receipts. They contain staking, local contract calls, etc.
         for receipt in local_receipts.iter() {
             if total_gas_burnt < gas_limit {
@@ -1186,8 +1196,13 @@ impl Runtime {
             }
         }
 
+        let d_4 = (t.elapsed().as_micros() as usize) / (1 + local_receipts.len());
+        let t = std::time::Instant::now();
+        let mut iter_count = 0;
+
         // Then we process the delayed receipts. It's a backlog of receipts from the past blocks.
         while delayed_receipts_indices.first_index < delayed_receipts_indices.next_available_index {
+            iter_count += 1;
             if total_gas_burnt >= gas_limit {
                 break;
             }
@@ -1215,6 +1230,9 @@ impl Runtime {
             process_receipt(&receipt, &mut state_update, &mut total_gas_burnt)?;
         }
 
+        let d_5 = (t.elapsed().as_micros() as usize) / (1 + iter_count);
+        let t = std::time::Instant::now();
+
         // And then we process the new incoming receipts. These are receipts from other shards.
         for receipt in incoming_receipts.iter() {
             // Validating new incoming no matter whether we have available gas or not. We don't
@@ -1227,6 +1245,9 @@ impl Runtime {
                 Self::delay_receipt(&mut state_update, &mut delayed_receipts_indices, receipt)?;
             }
         }
+
+        let d_6 = (t.elapsed().as_micros() as usize) / (1 + incoming_receipts.len());
+        let t = std::time::Instant::now();
 
         if delayed_receipts_indices != initial_delayed_receipt_indices {
             set(&mut state_update, TrieKey::DelayedReceiptIndices, &delayed_receipts_indices);
@@ -1261,6 +1282,13 @@ impl Runtime {
 
         let state_root = trie_changes.new_root;
         let proof = trie.recorded_storage();
+
+        let d_7 = t.elapsed().as_micros() as usize;
+        let durations = [d_1, d_2, d_3, d_4, d_5, d_6, d_7];
+        let labels = ['a', 'b', 'c', 'd', 'e', 'f', 'g'];
+        let msg: String = durations.iter().zip(labels.iter()).map(|(d, l)| format!("{}={} ", l, d)).collect();
+        info!("RUNTIME_APPLY_TIMING {}", msg);
+
         Ok(ApplyResult {
             state_root,
             trie_changes,
