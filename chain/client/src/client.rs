@@ -561,11 +561,13 @@ impl Client {
 
         debug!(
             target: "client",
-            "Produced chunk at height {} for shard {} with {} txs and {} receipts, I'm {}, chunk_hash: {}",
+            "Produced chunk at height {} for shard {} with {} txs and {} receipts, {} gas used out of {} gas limit, I'm {}, chunk_hash: {}",
             next_height,
             shard_id,
             num_filtered_transactions,
             outgoing_receipts.len(),
+            chunk_extra.gas_used,
+            chunk_extra.gas_limit,
             validator_signer.validator_id(),
             encoded_chunk.chunk_hash().0,
         );
