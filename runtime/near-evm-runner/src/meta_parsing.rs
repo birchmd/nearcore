@@ -385,9 +385,14 @@ fn arg_to_abi_token(ty: &ArgType, arg: &RlpValue, methods: &MethodAndTypes) -> R
         }
         ArgType::Byte(_) => value_to_abi_token(arg, |b| Ok(ABIToken::FixedBytes(b.clone()))),
         ArgType::Uint | ArgType::Int | ArgType::Bool => {
-            value_to_abi_token(arg, |b| Ok(ABIToken::Uint(U256::from_big_endian(&b))))
+            value_to_abi_token(arg, |b| Ok(ABIToken::Uint(ethabi::Uint::from_big_endian(&b))))
         }
-        ArgType::Address => value_to_abi_token(arg, |b| Ok(ABIToken::Address(address_from_arr(b)))),
+        ArgType::Address => {
+            value_to_abi_token(arg, |b| {
+                let address = ethabi::Address::from_slice(b);
+                Ok(ABIToken::Address(address))
+            })
+        }
         ArgType::Array { inner, length: None } => list_to_abi_token(arg, |l| {
             let mut tokens = vec![];
             for arg in l {
