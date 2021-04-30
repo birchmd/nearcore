@@ -22,13 +22,13 @@ use std::path::Path;
 use once_cell::sync::OnceCell;
 
 /// Lazily loads contract's code from a directory in the source tree.
-pub struct TestContract {
+pub(crate) struct TestContract {
     path: &'static str,
     cell: OnceCell<Vec<u8>>,
 }
 
 impl TestContract {
-    pub const fn new(path: &'static str) -> TestContract {
+    pub(crate) const fn new(path: &'static str) -> TestContract {
         TestContract { path, cell: OnceCell::new() }
     }
 }

@@ -7,14 +7,14 @@ use serde::Serialize;
 
 use near_jsonrpc_primitives::errors::RpcError;
 use near_jsonrpc_primitives::message::{from_slice, Message};
-use near_jsonrpc_primitives::rpc::{
-    RpcStateChangesRequest, RpcStateChangesResponse, RpcValidatorsOrderedRequest,
-};
+use near_jsonrpc_primitives::types::changes::{RpcStateChangesRequest, RpcStateChangesResponse};
+use near_jsonrpc_primitives::types::validator::RpcValidatorsOrderedRequest;
 use near_primitives::hash::CryptoHash;
 use near_primitives::types::{BlockId, BlockReference, MaybeBlockId, ShardId};
+use near_primitives::views::validator_stake_view::ValidatorStakeView;
 use near_primitives::views::{
     BlockView, ChunkView, EpochValidatorInfo, FinalExecutionOutcomeView, GasPriceView,
-    StatusResponse, ValidatorStakeView,
+    StatusResponse,
 };
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -184,6 +184,10 @@ jsonrpc_client!(pub struct JsonRpcClient {
     pub fn EXPERIMENTAL_check_tx(&self, tx: String) -> RpcRequest<serde_json::Value>;
     #[allow(non_snake_case)]
     pub fn EXPERIMENTAL_genesis_config(&self) -> RpcRequest<serde_json::Value>;
+    #[allow(non_snake_case)]
+    pub fn EXPERIMENTAL_broadcast_tx_sync(&self, tx: String) -> RpcRequest<serde_json::Value>;
+    #[allow(non_snake_case)]
+    pub fn EXPERIMENTAL_tx_status(&self, tx: String) -> RpcRequest<serde_json::Value>;
     pub fn health(&self) -> RpcRequest<()>;
     pub fn tx(&self, hash: String, account_id: String) -> RpcRequest<FinalExecutionOutcomeView>;
     pub fn chunk(&self, id: ChunkId) -> RpcRequest<ChunkView>;

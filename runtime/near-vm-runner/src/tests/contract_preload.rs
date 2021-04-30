@@ -1,8 +1,10 @@
-use crate::{run_vm, ContractCallPrepareRequest, ContractCaller, VMError};
+use crate::{run_vm, ContractCallPrepareRequest, ContractCaller, VMError, VMKind};
 use near_primitives::contract::ContractCode;
 use near_primitives::runtime::fees::RuntimeFeesConfig;
-use near_vm_logic::{ProtocolVersion, VMConfig, VMContext, VMKind, VMOutcome};
+use near_vm_logic::{ProtocolVersion, VMConfig, VMContext, VMOutcome};
 
+use crate::cache::precompile_contract_impl;
+use crate::errors::ContractPrecompilatonResult;
 use near_primitives::types::CompiledContractCache;
 use near_vm_errors::VMError::FunctionCallError;
 use near_vm_logic::mocks::mock_external::MockedExternal;
@@ -11,11 +13,6 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::thread::sleep;
 use std::time::Duration;
-
-lazy_static_include::lazy_static_include_bytes! {
-    TEST_CONTRACT_1 => "tests/res/test_contract_rs.wasm",
-    TEST_CONTRACT_2 => "tests/res/test_contract_ts.wasm",
-}
 
 fn default_vm_context() -> VMContext {
     return VMContext {
@@ -50,6 +47,10 @@ impl MockCompiledContractCache {
             store: Arc::new(Mutex::new(HashMap::new())),
             delay: Duration::from_millis(delay as u64),
         }
+    }
+
+    pub fn len(&self) -> usize {
+        self.store.lock().unwrap().len()
     }
 }
 
@@ -92,8 +93,8 @@ fn test_result(result: (Option<VMOutcome>, Option<VMError>), check_gas: bool) ->
 }
 
 fn test_vm_runner(preloaded: bool, vm_kind: VMKind, repeat: i32) {
-    let code1 = Arc::new(ContractCode::new(TEST_CONTRACT_1.to_vec(), None));
-    let code2 = Arc::new(ContractCode::new(TEST_CONTRACT_2.to_vec(), None));
+    let code1 = Arc::new(ContractCode::new(near_test_contracts::rs_contract().to_vec(), None));
+    let code2 = Arc::new(ContractCode::new(near_test_contracts::ts_contract().to_vec(), None));
     let method_name1 = "log_something";
 
     let mut fake_external = MockedExternal::new();
@@ -192,4 +193,36 @@ pub fn test_run_preloaded() {
     test_vm_runner(true, VMKind::Wasmer0, 100);
     #[cfg(feature = "wasmer1_vm")]
     test_vm_runner(true, VMKind::Wasmer1, 100);
+}
+
+fn test_precompile_vm(vm_kind: VMKind) {
+    let mock_cache = MockCompiledContractCache::new(0);
+    let cache: Option<&dyn CompiledContractCache> = Some(&mock_cache);
+    let vm_config = VMConfig::default();
+    let code1 = ContractCode::new(near_test_contracts::rs_contract().to_vec(), None);
+    let code2 = ContractCode::new(near_test_contracts::ts_contract().to_vec(), None);
+
+    let result = precompile_contract_impl(vm_kind, &code1, &vm_config, cache);
+    assert_eq!(result, Result::Ok(ContractPrecompilatonResult::ContractCompiled));
+    assert_eq!(mock_cache.len(), 1);
+    let result = precompile_contract_impl(vm_kind, &code1, &vm_config, cache);
+    assert_eq!(result, Result::Ok(ContractPrecompilatonResult::ContractAlreadyInCache));
+    assert_eq!(mock_cache.len(), 1);
+    let result = precompile_contract_impl(vm_kind, &code2, &vm_config, None);
+    assert_eq!(result, Result::Ok(ContractPrecompilatonResult::CacheNotAvailable));
+    assert_eq!(mock_cache.len(), 1);
+    let result = precompile_contract_impl(vm_kind, &code2, &vm_config, cache);
+    assert_eq!(result, Result::Ok(ContractPrecompilatonResult::ContractCompiled));
+    assert_eq!(mock_cache.len(), 2);
+    let result = precompile_contract_impl(vm_kind, &code2, &vm_config, cache);
+    assert_eq!(result, Result::Ok(ContractPrecompilatonResult::ContractAlreadyInCache));
+    assert_eq!(mock_cache.len(), 2);
+}
+
+#[test]
+pub fn test_precompile() {
+    #[cfg(feature = "wasmer0_vm")]
+    test_precompile_vm(VMKind::Wasmer0);
+    #[cfg(feature = "wasmer1_vm")]
+    test_precompile_vm(VMKind::Wasmer1);
 }

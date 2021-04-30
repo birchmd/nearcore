@@ -34,7 +34,8 @@ pub fn genesis_header(genesis: &Genesis) -> BlockHeader {
     let dir = tempdir().unwrap();
     let store = create_test_store();
     let chain_genesis = ChainGenesis::from(genesis);
-    let runtime = Arc::new(NightshadeRuntime::new(dir.path(), store, genesis, vec![], vec![]));
+    let runtime =
+        Arc::new(NightshadeRuntime::new(dir.path(), store, genesis, vec![], vec![], None));
     let chain = Chain::new(runtime, &chain_genesis, DoomslugThresholdMode::TwoThirds).unwrap();
     chain.genesis().clone()
 }
@@ -44,7 +45,8 @@ pub fn genesis_block(genesis: &Genesis) -> Block {
     let dir = tempdir().unwrap();
     let store = create_test_store();
     let chain_genesis = ChainGenesis::from(genesis);
-    let runtime = Arc::new(NightshadeRuntime::new(dir.path(), store, genesis, vec![], vec![]));
+    let runtime =
+        Arc::new(NightshadeRuntime::new(dir.path(), store, genesis, vec![], vec![], None));
     let mut chain = Chain::new(runtime, &chain_genesis, DoomslugThresholdMode::TwoThirds).unwrap();
     chain.get_block(&chain.genesis().hash().clone()).unwrap().clone()
 }
@@ -60,7 +62,7 @@ pub fn start_nodes(
     init_integration_logger();
 
     let num_nodes = dirs.len();
-    let num_tracking_nodes = dirs.len() - num_lightclient;
+    let num_tracking_nodes = num_nodes - num_lightclient;
     let seeds = (0..num_nodes).map(|i| format!("near.{}", i)).collect::<Vec<_>>();
     let mut genesis = Genesis::test_sharded(
         seeds.iter().map(|s| s.as_str()).collect(),

@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, RwLock};
 
 use near_crypto::{PublicKey, Signer};
-use near_jsonrpc::ServerError;
+use near_jsonrpc_primitives::errors::ServerError;
 use near_primitives::errors::{RuntimeError, TxExecutionError};
 use near_primitives::hash::CryptoHash;
 use near_primitives::receipt::Receipt;
@@ -60,7 +60,7 @@ impl RuntimeUser {
         let runtime_config = Arc::new(client.read().unwrap().runtime_config.clone());
         RuntimeUser {
             signer,
-            trie_viewer: TrieViewer::new(),
+            trie_viewer: TrieViewer::new_with_state_size_limit(None),
             account_id: account_id.to_string(),
             client,
             transaction_results: Default::default(),
@@ -139,6 +139,7 @@ impl RuntimeUser {
             current_protocol_version: PROTOCOL_VERSION,
             config: self.runtime_config.clone(),
             cache: None,
+            is_new_chunk: true,
             #[cfg(feature = "protocol_feature_evm")]
             evm_chain_id: TESTNET_EVM_CHAIN_ID,
             profile: Default::default(),
@@ -294,6 +295,10 @@ impl User for RuntimeUser {
 
     fn get_block(&self, _height: u64) -> Option<BlockView> {
         unimplemented!("get_block should not be implemented for RuntimeUser");
+    }
+
+    fn get_block_by_hash(&self, _block_hash: CryptoHash) -> Option<BlockView> {
+        None
     }
 
     fn get_chunk(&self, _height: u64, _shard_id: u64) -> Option<ChunkView> {

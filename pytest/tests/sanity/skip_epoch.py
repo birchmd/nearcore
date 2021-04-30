@@ -22,10 +22,10 @@ near_root, node_dirs = init_cluster(
     4, 1, 4, config,
     [["min_gas_price", 0], ["max_inflation_rate", [0, 1]], ["epoch_length", 12],
      ["block_producer_kickout_threshold", 20], ["chunk_producer_kickout_threshold", 20]],
-    {0: {"view_client_throttle_period": {"secs": 0, "nanos": 0}},
-     1: {"view_client_throttle_period": {"secs": 0, "nanos": 0}},
-     2: {"view_client_throttle_period": {"secs": 0, "nanos": 0}},
-     3: {"view_client_throttle_period": {"secs": 0, "nanos": 0}}, 4: {
+    {0: {"view_client_throttle_period": {"secs": 0, "nanos": 0}, "consensus": {"state_sync_timeout": {"secs": 2, "nanos": 0}}},
+     1: {"view_client_throttle_period": {"secs": 0, "nanos": 0}, "consensus": {"state_sync_timeout": {"secs": 2, "nanos": 0}}},
+     2: {"view_client_throttle_period": {"secs": 0, "nanos": 0}, "consensus": {"state_sync_timeout": {"secs": 2, "nanos": 0}}},
+     3: {"view_client_throttle_period": {"secs": 0, "nanos": 0}, "consensus": {"state_sync_timeout": {"secs": 2, "nanos": 0}}}, 4: {
         "tracked_shards": [0, 1, 2, 3],
         "view_client_throttle_period": {"secs": 0, "nanos": 0}
     }})
@@ -33,14 +33,16 @@ near_root, node_dirs = init_cluster(
 started = time.time()
 
 boot_node = spin_up_node(config, near_root, node_dirs[0], 0, None, None)
+boot_node.stop_checking_store()
 node3 = spin_up_node(config, near_root, node_dirs[2], 2, boot_node.node_key.pk,
                      boot_node.addr())
 node4 = spin_up_node(config, near_root, node_dirs[3], 3, boot_node.node_key.pk,
                      boot_node.addr())
 observer = spin_up_node(config, near_root, node_dirs[4], 4,
                         boot_node.node_key.pk, boot_node.addr())
+observer.stop_checking_store()
 
-ctx = TxContext([0, 0, 0, 0, 0], [boot_node, None, node3, node4, observer])
+ctx = TxContext([4, 4, 4, 4, 4], [boot_node, None, node3, node4, observer])
 initial_balances = ctx.get_balances()
 total_supply = sum(initial_balances)
 
@@ -56,7 +58,7 @@ largest_height = 0
 #    observer for the shard it doesn't care about
 while True:
     assert time.time() - started < TIMEOUT
-    status = boot_node.get_status()
+    status = observer.get_status()
     hash_ = status['sync_info']['latest_block_hash']
     new_height = status['sync_info']['latest_block_height']
     seen_boot_heights.add(new_height)
@@ -73,9 +75,12 @@ while True:
 
     time.sleep(0.1)
 
+print("stage 1 done")
+
 # 2. Spin up the second node and make sure it gets to 35 as well, and doesn't diverge
 node2 = spin_up_node(config, near_root, node_dirs[1], 1, boot_node.node_key.pk,
                      boot_node.addr())
+node2.stop_checking_store()
 
 status = boot_node.get_status()
 new_height = status['sync_info']['latest_block_height']
@@ -103,6 +108,8 @@ while True:
 
     time.sleep(0.1)
 
+print("stage 2 done")
+
 # 3. During (1) we sent some txs. Make sure the state changed. We can't compare to the
 #    expected balances directly, since the tx sent to the shard that node1 is responsible
 #    for was never applied, but we can make sure that some change to the state was done,
@@ -117,6 +124,8 @@ assert (balances != initial_balances)
 assert (sum(balances) == total_supply)
 
 initial_balances = balances
+
+print("stage 3 done")
 
 # 4. Stake for the second node to bring it back up as a validator and wait until it actually
 #    becomes one
@@ -147,13 +156,15 @@ while True:
 
     time.sleep(1)
 
+print("stage 4 done")
+
 ctx.next_nonce = 100
 # 5. Record the latest height and bring down the first node, wait for couple epochs to pass
-status = node2.get_status()
+status = observer.get_status()
 last_height = status['sync_info']['latest_block_height']
 
 ctx.nodes = [boot_node, node2, node3, node4, observer]
-ctx.act_to_val = [1, 1, 1, 1, 1]
+ctx.act_to_val = [4, 4, 4, 4, 4]
 
 boot_node.kill()
 seen_boot_heights = set()
@@ -161,7 +172,7 @@ sent_txs = False
 
 while True:
     assert time.time() - started < TIMEOUT
-    status = node2.get_status()
+    status = observer.get_status()
     hash_ = status['sync_info']['latest_block_hash']
     new_height = status['sync_info']['latest_block_height']
     seen_boot_heights.add(new_height)
@@ -182,7 +193,8 @@ balances = ctx.get_balances()
 print("New balances: %s\nNew total supply: %s" % (balances, sum(balances)))
 
 ctx.nodes = [observer, node2]
+ctx.act_to_val = [0, 0, 0, 0, 0]
 print("Observer sees: %s" % ctx.get_balances())
 
-assert (balances != initial_balances)
-assert (sum(balances) == total_supply)
+assert balances != initial_balances, "current balance %s, initial balance %s" % (balances, initial_balances)
+assert sum(balances) == total_supply

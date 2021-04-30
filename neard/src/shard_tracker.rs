@@ -13,7 +13,7 @@ use near_primitives::types::{AccountId, EpochId, NumShards, ShardId};
 const POISONED_LOCK_ERR: &str = "The lock was poisoned.";
 
 pub fn account_id_to_shard_id(account_id: &AccountId, num_shards: NumShards) -> ShardId {
-    let mut cursor = Cursor::new((hash(&account_id.clone().into_bytes()).0).0);
+    let mut cursor = Cursor::new(hash(&account_id.clone().into_bytes()).0);
     cursor.read_u64::<LittleEndian>().expect("Must not happened") % (num_shards)
 }
 
@@ -232,9 +232,11 @@ mod tests {
 
     use near_crypto::{KeyType, PublicKey};
     use near_epoch_manager::{EpochManager, RewardCalculator};
-    use near_primitives::epoch_manager::{BlockInfo, EpochConfig};
+    use near_primitives::epoch_manager::block_info::BlockInfo;
+    use near_primitives::epoch_manager::EpochConfig;
     use near_primitives::hash::{hash, CryptoHash};
-    use near_primitives::types::{BlockHeight, EpochId, NumShards, ValidatorStake};
+    use near_primitives::types::validator_stake::ValidatorStake;
+    use near_primitives::types::{BlockHeight, EpochId, NumShards};
     use near_store::test_utils::create_test_store;
 
     use super::{account_id_to_shard_id, ShardTracker, POISONED_LOCK_ERR};
@@ -268,7 +270,6 @@ mod tests {
             protocol_treasury_account: "".to_string(),
             online_max_threshold: initial_epoch_config.online_max_threshold,
             online_min_threshold: initial_epoch_config.online_min_threshold,
-            #[cfg(feature = "protocol_feature_rectify_inflation")]
             num_seconds_per_year: 1000000,
         };
         Arc::new(RwLock::new(
@@ -277,11 +278,11 @@ mod tests {
                 initial_epoch_config,
                 PROTOCOL_VERSION,
                 reward_calculator,
-                vec![ValidatorStake {
-                    account_id: "test".to_string(),
-                    public_key: PublicKey::empty(KeyType::ED25519),
-                    stake: 100,
-                }],
+                vec![ValidatorStake::new(
+                    "test".to_string(),
+                    PublicKey::empty(KeyType::ED25519),
+                    100,
+                )],
             )
             .unwrap(),
         ))
@@ -307,10 +308,7 @@ mod tests {
                     vec![],
                     DEFAULT_TOTAL_SUPPLY,
                     PROTOCOL_VERSION,
-                    #[cfg(feature = "protocol_feature_rectify_inflation")]
-                    {
-                        height * 10u64.pow(9)
-                    },
+                    height * 10u64.pow(9),
                 ),
                 [0; 32],
             )

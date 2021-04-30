@@ -8,8 +8,8 @@ use near_actix_test_utils::run_actix_until_stop;
 use near_crypto::{KeyType, PublicKey, Signature};
 use near_jsonrpc::client::new_client;
 use near_jsonrpc_client::ChunkId;
-use near_jsonrpc_primitives::rpc::RpcValidatorsOrderedRequest;
 use near_jsonrpc_primitives::types::query::QueryResponseKind;
+use near_jsonrpc_primitives::types::validator::RpcValidatorsOrderedRequest;
 use near_logger_utils::init_test_logger;
 use near_network::test_utils::WaitOrTimeout;
 use near_primitives::account::{AccessKey, AccessKeyPermission};
@@ -460,7 +460,7 @@ fn test_validators_ordered() {
             .await
             .unwrap();
         assert_eq!(
-            validators.into_iter().map(|v| v.account_id).collect::<Vec<_>>(),
+            validators.into_iter().map(|v| v.take_account_id()).collect::<Vec<_>>(),
             vec!["test1".to_string(), "test2".to_string()]
         )
     });

@@ -11,15 +11,15 @@ pub mod wasmtime_runner {
         config::VMConfig, profile::ProfileData, types::CompiledContractCache,
         version::ProtocolVersion,
     };
-    use near_vm_errors::FunctionCallError::{LinkError, WasmUnknownError};
-    use near_vm_errors::{FunctionCallError, MethodResolveError, VMError, VMLogicError};
+    use near_vm_errors::FunctionCallError::LinkError;
+    use near_vm_errors::{FunctionCallError, MethodResolveError, VMError, VMLogicError, WasmTrap};
     use near_vm_logic::{
         types::PromiseResult, External, MemoryLike, VMContext, VMLogic, VMOutcome,
     };
     use std::ffi::c_void;
     use std::str;
     use wasmtime::ExternType::Func;
-    use wasmtime::{Config, Engine, Limits, Linker, Memory, MemoryType, Module, Store};
+    use wasmtime::{Config, Engine, Limits, Linker, Memory, MemoryType, Module, Store, TrapCode};
 
     pub struct WasmtimeMemory(Memory);
 
@@ -88,7 +88,41 @@ pub mod wasmtime_runner {
                 None => panic!("Error is not properly set"),
             }
         } else {
-            VMError::FunctionCallError(WasmUnknownError)
+            match trap.trap_code() {
+                Some(TrapCode::StackOverflow) => {
+                    VMError::FunctionCallError(FunctionCallError::WasmTrap(WasmTrap::StackOverflow))
+                }
+                Some(TrapCode::MemoryOutOfBounds) => VMError::FunctionCallError(
+                    FunctionCallError::WasmTrap(WasmTrap::MemoryOutOfBounds),
+                ),
+                Some(TrapCode::TableOutOfBounds) => VMError::FunctionCallError(
+                    FunctionCallError::WasmTrap(WasmTrap::MemoryOutOfBounds),
+                ),
+                Some(TrapCode::IndirectCallToNull) => VMError::FunctionCallError(
+                    FunctionCallError::WasmTrap(WasmTrap::IndirectCallToNull),
+                ),
+                Some(TrapCode::BadSignature) => VMError::FunctionCallError(
+                    FunctionCallError::WasmTrap(WasmTrap::IncorrectCallIndirectSignature),
+                ),
+                Some(TrapCode::IntegerOverflow) => VMError::FunctionCallError(
+                    FunctionCallError::WasmTrap(WasmTrap::IllegalArithmetic),
+                ),
+                Some(TrapCode::IntegerDivisionByZero) => VMError::FunctionCallError(
+                    FunctionCallError::WasmTrap(WasmTrap::IllegalArithmetic),
+                ),
+                Some(TrapCode::BadConversionToInteger) => VMError::FunctionCallError(
+                    FunctionCallError::WasmTrap(WasmTrap::IllegalArithmetic),
+                ),
+                Some(TrapCode::UnreachableCodeReached) => {
+                    VMError::FunctionCallError(FunctionCallError::WasmTrap(WasmTrap::Unreachable))
+                }
+                Some(TrapCode::Interrupt) => VMError::FunctionCallError(
+                    FunctionCallError::Nondeterministic("interrupt".to_string()),
+                ),
+                _ => VMError::FunctionCallError(FunctionCallError::WasmUnknownError {
+                    debug_message: "unknown trap".to_string(),
+                }),
+            }
         }
     }
 
@@ -104,11 +138,7 @@ pub mod wasmtime_runner {
 
     impl IntoVMError for wasmtime::Trap {
         fn into_vm_error(self) -> VMError {
-            if self.i32_exit_status() == Some(239) {
-                trap_to_error(&self)
-            } else {
-                VMError::FunctionCallError(WasmUnknownError)
-            }
+            trap_to_error(&self)
         }
     }
 
@@ -174,7 +204,7 @@ pub mod wasmtime_runner {
         match module.get_export(method_name) {
             Some(export) => match export {
                 Func(func_type) => {
-                    if !func_type.params().is_empty() || !func_type.results().is_empty() {
+                    if func_type.params().len() != 0 || func_type.results().len() != 0 {
                         return (
                             None,
                             Some(VMError::FunctionCallError(
@@ -205,8 +235,8 @@ pub mod wasmtime_runner {
         }
         match linker.instantiate(&module) {
             Ok(instance) => match instance.get_func(method_name) {
-                Some(func) => match func.get0::<()>() {
-                    Ok(run) => match run() {
+                Some(func) => match func.typed::<(), ()>() {
+                    Ok(run) => match run.call(()) {
                         Ok(_) => (Some(logic.outcome()), None),
                         Err(err) => (Some(logic.outcome()), Some(err.into_vm_error())),
                     },
@@ -224,12 +254,12 @@ pub mod wasmtime_runner {
     }
     #[cfg(not(feature = "lightbeam"))]
     pub fn get_engine(config: &mut wasmtime::Config) -> Engine {
-        Engine::new(config)
+        Engine::new(config).unwrap()
     }
 
     #[cfg(feature = "lightbeam")]
     pub fn get_engine(config: &mut wasmtime::Config) -> Engine {
-        Engine::new(config.strategy(wasmtime::Strategy::Lightbeam).unwrap())
+        Engine::new(config.strategy(wasmtime::Strategy::Lightbeam).unwrap()).unwrap()
     }
 }
 

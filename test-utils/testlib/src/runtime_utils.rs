@@ -1,6 +1,3 @@
-use std::fs;
-use std::path::PathBuf;
-
 use byteorder::{ByteOrder, LittleEndian};
 
 use near_chain_configs::Genesis;
@@ -26,19 +23,12 @@ pub fn evm_account() -> AccountId {
     "evm".to_string()
 }
 
-pub fn default_code_hash() -> CryptoHash {
-    let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    path.push("../../runtime/near-vm-runner/tests/res/test_contract_rs.wasm");
-    let genesis_wasm = fs::read(path).unwrap();
-    hash(&genesis_wasm)
+pub fn implicit_account() -> AccountId {
+    "3885505359911f2493f0c40a2bf042981936ec5dddd59708581b155a047864d8".to_string()
 }
 
 lazy_static::lazy_static! {
-    static ref DEFAULT_TEST_CONTRACT_HASH: CryptoHash = hash(&DEFAULT_TEST_CONTRACT);
-}
-
-lazy_static_include::lazy_static_include_bytes! {
-    DEFAULT_TEST_CONTRACT => "../../runtime/near-vm-runner/tests/res/test_contract_rs.wasm"
+    static ref DEFAULT_TEST_CONTRACT_HASH: CryptoHash = hash(near_test_contracts::rs_contract());
 }
 
 pub fn add_test_contract(genesis: &mut Genesis, account_id: &AccountId) {
@@ -59,7 +49,7 @@ pub fn add_test_contract(genesis: &mut Genesis, account_id: &AccountId) {
     }
     genesis.records.as_mut().push(StateRecord::Contract {
         account_id: account_id.clone(),
-        code: DEFAULT_TEST_CONTRACT.to_vec(),
+        code: near_test_contracts::rs_contract().to_vec(),
     });
 }
 
@@ -96,7 +86,7 @@ pub fn get_runtime_and_trie() -> (Runtime, ShardTries, StateRoot) {
 
 pub fn get_test_trie_viewer() -> (TrieViewer, TrieUpdate) {
     let (_, tries, root) = get_runtime_and_trie();
-    let trie_viewer = TrieViewer::new();
+    let trie_viewer = TrieViewer::new_with_state_size_limit(None);
     let state_update = tries.new_trie_update(0, root);
     (trie_viewer, state_update)
 }

@@ -2,29 +2,24 @@ use near_primitives::contract::ContractCode;
 use near_primitives::profile::ProfileData;
 use near_primitives::runtime::fees::RuntimeFeesConfig;
 use near_primitives::types::Balance;
-use near_vm_errors::{FunctionCallError, VMError};
+use near_vm_errors::{FunctionCallError, VMError, WasmTrap};
 use near_vm_logic::mocks::mock_external::MockedExternal;
-use near_vm_logic::{types::ReturnData, VMConfig, VMKind, VMOutcome};
+use near_vm_logic::{types::ReturnData, VMConfig, VMOutcome};
 use std::mem::size_of;
 
-use crate::run_vm;
 use crate::tests::{
     create_context, with_vm_variants, CURRENT_ACCOUNT_ID, LATEST_PROTOCOL_VERSION,
     PREDECESSOR_ACCOUNT_ID, SIGNER_ACCOUNT_ID, SIGNER_ACCOUNT_PK,
 };
-
-#[cfg(feature = "protocol_feature_alt_bn128")]
-lazy_static_include::lazy_static_include_bytes! {
-    TEST_CONTRACT => "tests/res/nightly_test_contract_rs.wasm",
-}
-
-#[cfg(not(feature = "protocol_feature_alt_bn128"))]
-lazy_static_include::lazy_static_include_bytes! {
-    TEST_CONTRACT => "tests/res/test_contract_rs.wasm",
-}
+use crate::{run_vm, VMKind};
 
 fn test_contract() -> ContractCode {
-    ContractCode::new(TEST_CONTRACT.to_vec(), None)
+    let code = if cfg!(feature = "protocol_feature_alt_bn128") {
+        near_test_contracts::nightly_rs_contract()
+    } else {
+        near_test_contracts::rs_contract()
+    };
+    ContractCode::new(code.to_vec(), None)
 }
 
 fn assert_run_result((outcome, err): (Option<VMOutcome>, Option<VMError>), expected_value: u64) {
@@ -139,6 +134,7 @@ fn run_test_ext(
     let fees = RuntimeFeesConfig::default();
     let context = create_context(input.to_vec());
 
+    let profile = ProfileData::new_enabled();
     let (outcome, err) = run_vm(
         &code,
         &method,
@@ -150,8 +146,10 @@ fn run_test_ext(
         vm_kind,
         LATEST_PROTOCOL_VERSION,
         None,
-        ProfileData::new_disabled(),
+        profile.clone(),
     );
+
+    assert_eq!(profile.action_gas(), 0);
 
     if let Some(_) = err {
         panic!("Failed execution: {:?}", err);
@@ -287,12 +285,10 @@ pub fn test_out_of_memory() {
         assert_eq!(
             result.1,
             match vm_kind {
-                VMKind::Wasmer0 =>
-                    Some(VMError::FunctionCallError(FunctionCallError::WasmUnknownError)),
-                VMKind::Wasmer1 => Some(VMError::FunctionCallError(
-                    FunctionCallError::Wasmer1Trap("unreachable".to_string())
+                VMKind::Wasmer0 | VMKind::Wasmer1 => Some(VMError::FunctionCallError(
+                    FunctionCallError::WasmTrap(WasmTrap::Unreachable)
                 )),
-                _ => unreachable!(),
+                VMKind::Wasmtime => unreachable!(),
             }
         );
     })

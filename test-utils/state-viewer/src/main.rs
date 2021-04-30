@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::convert::TryFrom;
-use std::fs::File;
+use std::fs::{self, File};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -19,7 +19,9 @@ use near_primitives::contract::ContractCode;
 use near_primitives::hash::CryptoHash;
 use near_primitives::serialize::to_base;
 use near_primitives::state_record::StateRecord;
-use near_primitives::types::{BlockHeight, ChunkExtra, ShardId, StateRoot};
+use near_primitives::trie_key::TrieKey;
+use near_primitives::types::chunk_extra::ChunkExtra;
+use near_primitives::types::{BlockHeight, ShardId, StateRoot};
 use near_store::test_utils::create_test_store;
 use near_store::{create_store, Store, TrieIterator};
 use neard::{get_default_home, get_store_path, load_config, NearConfig, NightshadeRuntime};
@@ -60,6 +62,7 @@ fn load_trie_stop_at_height(
         &near_config.genesis,
         near_config.client_config.tracked_accounts.clone(),
         near_config.client_config.tracked_shards.clone(),
+        None,
     );
     let head = chain_store.head().unwrap();
     let last_block = match mode {
@@ -116,6 +119,7 @@ fn print_chain(
         &near_config.genesis,
         near_config.client_config.tracked_accounts.clone(),
         near_config.client_config.tracked_shards.clone(),
+        None,
     );
     let mut account_id_to_blocks = HashMap::new();
     let mut cur_epoch_id = None;
@@ -185,6 +189,7 @@ fn replay_chain(
         &near_config.genesis,
         near_config.client_config.tracked_accounts.clone(),
         near_config.client_config.tracked_shards.clone(),
+        None,
     );
     for height in start_height..=end_height {
         if let Ok(block_hash) = chain_store.get_block_hash_by_height(height) {
@@ -215,48 +220,73 @@ fn apply_block_at_height(
         &near_config.genesis,
         near_config.client_config.tracked_accounts.clone(),
         near_config.client_config.tracked_shards.clone(),
+        None,
     );
     let block_hash = chain_store.get_block_hash_by_height(height).unwrap();
     let block = chain_store.get_block(&block_hash).unwrap().clone();
-    assert_eq!(block.chunks()[shard_id as usize].height_included(), height);
-    let chunk =
-        chain_store.get_chunk(&block.chunks()[shard_id as usize].chunk_hash()).unwrap().clone();
-    let prev_block = chain_store.get_block(&block.header().prev_hash()).unwrap().clone();
-    let mut chain_store_update = ChainStoreUpdate::new(&mut chain_store);
-    let receipt_proof_response = chain_store_update
-        .get_incoming_receipts_for_shard(
-            shard_id,
-            block_hash,
-            prev_block.chunks()[shard_id as usize].height_included(),
-        )
-        .unwrap();
-    let receipts = collect_receipts_from_response(&receipt_proof_response);
+    let apply_result = if block.chunks()[shard_id as usize].height_included() == height {
+        let chunk =
+            chain_store.get_chunk(&block.chunks()[shard_id as usize].chunk_hash()).unwrap().clone();
+        let prev_block = chain_store.get_block(&block.header().prev_hash()).unwrap().clone();
+        let mut chain_store_update = ChainStoreUpdate::new(&mut chain_store);
+        let receipt_proof_response = chain_store_update
+            .get_incoming_receipts_for_shard(
+                shard_id,
+                block_hash,
+                prev_block.chunks()[shard_id as usize].height_included(),
+            )
+            .unwrap();
+        let receipts = collect_receipts_from_response(&receipt_proof_response);
 
-    let chunk_inner = chunk.cloned_header().take_inner();
-    let apply_result = runtime
-        .apply_transactions(
-            shard_id,
-            &chunk_inner.prev_state_root,
-            height,
-            block.header().raw_timestamp(),
-            block.header().prev_hash(),
-            block.hash(),
-            &receipts,
-            chunk.transactions(),
-            &chunk_inner.validator_proposals,
-            prev_block.header().gas_price(),
-            chunk_inner.gas_limit,
-            &block.header().challenges_result(),
-            *block.header().random_value(),
-        )
-        .unwrap();
+        let chunk_inner = chunk.cloned_header().take_inner();
+        runtime
+            .apply_transactions(
+                shard_id,
+                chunk_inner.prev_state_root(),
+                height,
+                block.header().raw_timestamp(),
+                block.header().prev_hash(),
+                block.hash(),
+                &receipts,
+                chunk.transactions(),
+                chunk_inner.validator_proposals(),
+                prev_block.header().gas_price(),
+                chunk_inner.gas_limit(),
+                &block.header().challenges_result(),
+                *block.header().random_value(),
+                true,
+            )
+            .unwrap()
+    } else {
+        let chunk_extra =
+            chain_store.get_chunk_extra(block.header().prev_hash(), shard_id).unwrap().clone();
+
+        runtime
+            .apply_transactions(
+                shard_id,
+                chunk_extra.state_root(),
+                block.header().height(),
+                block.header().raw_timestamp(),
+                block.header().prev_hash(),
+                &block.hash(),
+                &[],
+                &[],
+                chunk_extra.validator_proposals(),
+                block.header().gas_price(),
+                chunk_extra.gas_limit(),
+                &block.header().challenges_result(),
+                *block.header().random_value(),
+                false,
+            )
+            .unwrap()
+    };
     let (outcome_root, _) = ApplyTransactionResult::compute_outcomes_proof(&apply_result.outcomes);
     let chunk_extra = ChunkExtra::new(
         &apply_result.new_root,
         outcome_root,
         apply_result.validator_proposals,
         apply_result.total_gas_burnt,
-        chunk_inner.gas_limit,
+        near_config.genesis.config.gas_limit,
         apply_result.total_balance_burnt,
     );
 
@@ -487,6 +517,38 @@ fn main() {
                 )
                 .help("dump deployed contract code of given account to wasm file"),
         )
+        .subcommand(
+            SubCommand::with_name("dump_account_storage")
+                .arg(
+                    Arg::with_name("account")
+                        .long("account")
+                        .help("account name")
+                        .takes_value(true)
+                        .required(true),
+                )
+                .arg(
+                    Arg::with_name("storage_key")
+                        .long("storage_key")
+                        .help("account storage key")
+                        .takes_value(true)
+                        .default_value("STATE"),
+                )
+                .arg(
+                    Arg::with_name("output")
+                        .long("output")
+                        .help("output binary file")
+                        .takes_value(true)
+                        .default_value("output.bin"),
+                )
+                .arg(
+                    Arg::with_name("block_height")
+                        .long("block_height")
+                        .help("block height of the state to dump, number or \"latest\"")
+                        .takes_value(true)
+                        .default_value("latest"),
+                )
+                .help("dump contract data in storage of given account to binary file"),
+        )
         .get_matches();
 
     let home_dir = matches.value_of("home").map(|dir| Path::new(dir)).unwrap();
@@ -584,6 +646,46 @@ fn main() {
                 "Account {} does not exist or do not have contract deployed in all shards",
                 account_id
             );
+        }
+        ("dump_account_storage", Some(args)) => {
+            let account_id = args.value_of("account").unwrap();
+            let storage_key = args.value_of("storage_key").unwrap();
+            let output = args.value_of("output").unwrap();
+            let block_height = args.value_of("block_height").unwrap();
+            let block_height = if block_height == "latest" {
+                LoadTrieMode::Latest
+            } else if let Ok(height) = block_height.parse::<u64>() {
+                LoadTrieMode::Height(height)
+            } else {
+                panic!("block_height shoulb be either number or \"latest\"")
+            };
+            let (runtime, state_roots, _header) =
+                load_trie_stop_at_height(store, &home_dir, &near_config, block_height);
+            for (shard_id, state_root) in state_roots.iter().enumerate() {
+                let trie = runtime.get_trie_for_shard(shard_id as u64);
+                let key = TrieKey::ContractData {
+                    account_id: account_id.to_string(),
+                    key: storage_key.as_bytes().to_vec(),
+                };
+                let item = trie.get(state_root, &key.to_vec());
+                let value = item.unwrap();
+                if let Some(value) = value {
+                    let record = StateRecord::from_raw_key_value(key.to_vec(), value).unwrap();
+                    match record {
+                        StateRecord::Data { account_id: _, data_key: _, value } => {
+                            fs::write(output, &value).unwrap();
+                            println!(
+                                "Dump contract storage under key {} of account {} into file {}",
+                                storage_key, account_id, output
+                            );
+                            std::process::exit(0);
+                        }
+                        _ => unreachable!(),
+                    }
+                }
+            }
+            println!("Storage under key {} of account {} not found", storage_key, account_id);
+            std::process::exit(1);
         }
         (_, _) => unreachable!(),
     }

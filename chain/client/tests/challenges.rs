@@ -276,6 +276,7 @@ fn test_verify_chunk_invalid_state_challenge() {
         &genesis,
         vec![],
         vec![],
+        None,
     ))];
     let mut env = TestEnv::new_with_runtime(ChainGenesis::test(), 1, 1, runtimes);
     let signer = InMemorySigner::from_seed("test0", KeyType::ED25519, "test0");
@@ -402,7 +403,6 @@ fn test_verify_chunk_invalid_state_challenge() {
         let merkle_proofs = Block::compute_chunk_headers_root(block.chunks().iter()).1;
         assert_eq!(prev_merkle_proofs[0], challenge_body.prev_merkle_proof);
         assert_eq!(merkle_proofs[0], challenge_body.merkle_proof);
-        #[cfg(not(feature = "protocol_feature_add_account_versions"))]
         assert_eq!(
             challenge_body.partial_state.0,
             vec![
@@ -417,24 +417,6 @@ fn test_verify_chunk_invalid_state_challenge() {
                     3, 1, 0, 0, 0, 16, 49, 233, 115, 11, 86, 10, 193, 50, 45, 253, 137, 126, 230,
                     236, 254, 86, 230, 148, 94, 141, 44, 46, 130, 154, 189, 73, 179, 223, 178, 17,
                     133, 232, 213, 5, 0, 0, 0, 0, 0, 0
-                ]
-            ],
-        );
-        #[cfg(feature = "protocol_feature_add_account_versions")]
-        assert_eq!(
-            challenge_body.partial_state.0,
-            vec![
-                vec![
-                    1, 5, 0, 103, 136, 41, 229, 191, 222, 128, 157, 188, 48, 241, 45, 16, 109, 89,
-                    11, 71, 68, 27, 183, 107, 203, 67, 148, 6, 107, 149, 201, 181, 97, 233, 212,
-                    171, 30, 7, 228, 175, 99, 17, 113, 5, 94, 136, 200, 39, 136, 37, 110, 166, 241,
-                    148, 128, 55, 131, 173, 97, 98, 201, 68, 82, 244, 223, 70, 86, 164, 5, 0, 0, 0,
-                    0, 0, 0
-                ],
-                vec![
-                    3, 1, 0, 0, 0, 16, 154, 102, 233, 139, 210, 140, 249, 11, 123, 207, 177, 159,
-                    114, 249, 144, 220, 49, 241, 60, 112, 44, 187, 65, 32, 97, 193, 60, 115, 103,
-                    197, 230, 198, 216, 5, 0, 0, 0, 0, 0, 0
                 ]
             ],
         );
@@ -586,6 +568,7 @@ fn test_fishermen_challenge() {
             &genesis.clone(),
             vec![],
             vec![],
+            None,
         ))
     };
     let runtime1 = create_runtime();
@@ -647,6 +630,7 @@ fn test_challenge_in_different_epoch() {
         &genesis.clone(),
         vec![],
         vec![],
+        None,
     ));
     let runtime2 = Arc::new(neard::NightshadeRuntime::new(
         Path::new("."),
@@ -654,6 +638,7 @@ fn test_challenge_in_different_epoch() {
         &genesis.clone(),
         vec![],
         vec![],
+        None,
     ));
     let runtimes: Vec<Arc<dyn RuntimeAdapter>> = vec![runtime1, runtime2];
     let networks = vec![network_adapter.clone(), network_adapter.clone()];
@@ -706,7 +691,7 @@ fn test_challenge_in_different_epoch() {
             if let Err(e) = result {
                 match e.kind() {
                     ErrorKind::ChunksMissing(_) => {}
-                    _ => panic!(format!("unexpected error: {}", e)),
+                    _ => panic!("unexpected error: {}", e),
                 }
             }
         }

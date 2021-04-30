@@ -13,16 +13,18 @@ use near_crypto::Signature;
 use near_pool::types::PoolIterator;
 pub use near_primitives::block::{Block, BlockHeader, Tip};
 use near_primitives::challenge::{ChallengesResult, SlashedValidator};
-use near_primitives::epoch_manager::{BlockInfo, EpochInfo};
+use near_primitives::epoch_manager::block_info::BlockInfo;
+use near_primitives::epoch_manager::epoch_info::EpochInfo;
 use near_primitives::errors::InvalidTxError;
 use near_primitives::hash::{hash, CryptoHash};
 use near_primitives::merkle::{merklize, MerklePath};
 use near_primitives::receipt::Receipt;
 use near_primitives::sharding::{ChunkHash, ReceiptList, ShardChunkHeader};
 use near_primitives::transaction::{ExecutionOutcomeWithId, SignedTransaction};
+use near_primitives::types::validator_stake::{ValidatorStake, ValidatorStakeIter};
 use near_primitives::types::{
     AccountId, ApprovalStake, Balance, BlockHeight, BlockHeightDelta, EpochId, Gas, MerkleHash,
-    NumBlocks, ShardId, StateRoot, StateRootNode, ValidatorStake,
+    NumBlocks, ShardId, StateRoot, StateRootNode,
 };
 use near_primitives::version::{
     ProtocolVersion, MIN_GAS_PRICE_NEP_92, MIN_GAS_PRICE_NEP_92_FIX, MIN_PROTOCOL_VERSION_NEP_92,
@@ -103,7 +105,7 @@ impl ApplyTransactionResult {
 
 /// Compressed information about block.
 /// Useful for epoch manager.
-#[derive(Default, BorshSerialize, BorshDeserialize, Serialize, Clone, Debug)]
+#[derive(Default, Clone, Debug)]
 pub struct BlockHeaderInfo {
     pub hash: CryptoHash,
     pub prev_hash: CryptoHash,
@@ -116,7 +118,6 @@ pub struct BlockHeaderInfo {
     pub chunk_mask: Vec<bool>,
     pub total_supply: Balance,
     pub latest_protocol_version: ProtocolVersion,
-    #[cfg(feature = "protocol_feature_rectify_inflation")]
     pub timestamp_nanosec: u64,
 }
 
@@ -129,12 +130,11 @@ impl BlockHeaderInfo {
             random_value: *header.random_value(),
             last_finalized_height,
             last_finalized_block_hash: *header.last_final_block(),
-            proposals: header.validator_proposals().to_vec(),
+            proposals: header.validator_proposals().collect(),
             slashed_validators: vec![],
             chunk_mask: header.chunk_mask().to_vec(),
             total_supply: header.total_supply(),
             latest_protocol_version: header.latest_protocol_version(),
-            #[cfg(feature = "protocol_feature_rectify_inflation")]
             timestamp_nanosec: header.raw_timestamp(),
         }
     }
@@ -508,11 +508,12 @@ pub trait RuntimeAdapter: Send + Sync {
         block_hash: &CryptoHash,
         receipts: &[Receipt],
         transactions: &[SignedTransaction],
-        last_validator_proposals: &[ValidatorStake],
+        last_validator_proposals: ValidatorStakeIter,
         gas_price: Balance,
         gas_limit: Gas,
         challenges_result: &ChallengesResult,
         random_seed: CryptoHash,
+        is_new_chunk: bool,
     ) -> Result<ApplyTransactionResult, Error> {
         self.apply_transactions_with_optional_storage_proof(
             shard_id,
@@ -529,6 +530,7 @@ pub trait RuntimeAdapter: Send + Sync {
             challenges_result,
             random_seed,
             false,
+            is_new_chunk,
         )
     }
 
@@ -542,12 +544,13 @@ pub trait RuntimeAdapter: Send + Sync {
         block_hash: &CryptoHash,
         receipts: &[Receipt],
         transactions: &[SignedTransaction],
-        last_validator_proposals: &[ValidatorStake],
+        last_validator_proposals: ValidatorStakeIter,
         gas_price: Balance,
         gas_limit: Gas,
         challenges_result: &ChallengesResult,
         random_seed: CryptoHash,
         generate_storage_proof: bool,
+        is_new_chunk: bool,
     ) -> Result<ApplyTransactionResult, Error>;
 
     fn check_state_transition(
@@ -561,11 +564,12 @@ pub trait RuntimeAdapter: Send + Sync {
         block_hash: &CryptoHash,
         receipts: &[Receipt],
         transactions: &[SignedTransaction],
-        last_validator_proposals: &[ValidatorStake],
+        last_validator_proposals: ValidatorStakeIter,
         gas_price: Balance,
         gas_limit: Gas,
         challenges_result: &ChallengesResult,
         random_value: CryptoHash,
+        is_new_chunk: bool,
     ) -> Result<ApplyTransactionResult, Error>;
 
     /// Query runtime with given `path` and `data`.
@@ -713,6 +717,7 @@ mod tests {
         let num_shards = 32;
         let genesis_chunks =
             genesis_chunks(vec![StateRoot::default()], num_shards, 1_000_000, 0, PROTOCOL_VERSION);
+        let genesis_bps: Vec<ValidatorStake> = Vec::new();
         let genesis = Block::genesis(
             PROTOCOL_VERSION,
             genesis_chunks.into_iter().map(|chunk| chunk.take_header()).collect(),
@@ -720,7 +725,7 @@ mod tests {
             0,
             100,
             1_000_000_000,
-            Chain::compute_bp_hash_inner(vec![]).unwrap(),
+            Chain::compute_collection_hash(genesis_bps).unwrap(),
         );
         let signer = InMemoryValidatorSigner::from_seed("other", KeyType::ED25519, "other");
         let b1 = Block::empty(&genesis, &signer);

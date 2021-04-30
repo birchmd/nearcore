@@ -2,8 +2,10 @@ use crate::runtime_group_tools::RuntimeGroup;
 use borsh::ser::BorshSerialize;
 use near_crypto::{InMemorySigner, KeyType};
 use near_primitives::account::{AccessKeyPermission, FunctionCallPermission};
+use near_primitives::checked_feature;
 use near_primitives::hash::CryptoHash;
 use near_primitives::receipt::{ActionReceipt, ReceiptEnum};
+use near_primitives::version::PROTOCOL_VERSION;
 
 pub mod runtime_group_tools;
 
@@ -17,13 +19,9 @@ const GAS_1: u64 = 900_000_000_000_000;
 const GAS_2: u64 = GAS_1 / 3;
 const GAS_3: u64 = GAS_2 / 3;
 
-lazy_static_include::lazy_static_include_bytes! {
-    TEST_CONTRACT => "../near-vm-runner/tests/res/test_contract_rs.wasm"
-}
-
 #[test]
 fn test_simple_func_call() {
-    let group = RuntimeGroup::new(2, 2, &TEST_CONTRACT);
+    let group = RuntimeGroup::new(2, 2, near_test_contracts::rs_contract());
     let signer_sender = group.signers[0].clone();
     let signer_receiver = group.signers[1].clone();
 
@@ -59,7 +57,7 @@ fn test_simple_func_call() {
 // single promise, no callback (A->B)
 #[test]
 fn test_single_promise_no_callback() {
-    let group = RuntimeGroup::new(3, 3, &TEST_CONTRACT);
+    let group = RuntimeGroup::new(3, 3, near_test_contracts::rs_contract());
     let signer_sender = group.signers[0].clone();
     let signer_receiver = group.signers[1].clone();
 
@@ -117,7 +115,7 @@ fn test_single_promise_no_callback() {
 // single promise with callback (A->B=>C)
 #[test]
 fn test_single_promise_with_callback() {
-    let group = RuntimeGroup::new(4, 4, &TEST_CONTRACT);
+    let group = RuntimeGroup::new(4, 4, near_test_contracts::rs_contract());
     let signer_sender = group.signers[0].clone();
     let signer_receiver = group.signers[1].clone();
 
@@ -200,7 +198,7 @@ fn test_single_promise_with_callback() {
 // two promises, no callbacks (A->B->C)
 #[test]
 fn test_two_promises_no_callbacks() {
-    let group = RuntimeGroup::new(4, 4, &TEST_CONTRACT);
+    let group = RuntimeGroup::new(4, 4, near_test_contracts::rs_contract());
     let signer_sender = group.signers[0].clone();
     let signer_receiver = group.signers[1].clone();
 
@@ -277,7 +275,7 @@ fn test_two_promises_no_callbacks() {
 // two promises, with two callbacks (A->B->C=>D=>E) where call to E is initialized by completion of D.
 #[test]
 fn test_two_promises_with_two_callbacks() {
-    let group = RuntimeGroup::new(6, 6, &TEST_CONTRACT);
+    let group = RuntimeGroup::new(6, 6, near_test_contracts::rs_contract());
     let signer_sender = group.signers[0].clone();
     let signer_receiver = group.signers[1].clone();
 
@@ -391,7 +389,7 @@ fn test_two_promises_with_two_callbacks() {
 // single promise, no callback (A->B) with `promise_batch`
 #[test]
 fn test_single_promise_no_callback_batch() {
-    let group = RuntimeGroup::new(3, 3, &TEST_CONTRACT);
+    let group = RuntimeGroup::new(3, 3, near_test_contracts::rs_contract());
     let signer_sender = group.signers[0].clone();
     let signer_receiver = group.signers[1].clone();
 
@@ -452,7 +450,7 @@ fn test_single_promise_no_callback_batch() {
 // single promise with callback (A->B=>C) with batch actions
 #[test]
 fn test_single_promise_with_callback_batch() {
-    let group = RuntimeGroup::new(4, 4, &TEST_CONTRACT);
+    let group = RuntimeGroup::new(4, 4, near_test_contracts::rs_contract());
     let signer_sender = group.signers[0].clone();
     let signer_receiver = group.signers[1].clone();
 
@@ -540,7 +538,7 @@ fn test_single_promise_with_callback_batch() {
 
 #[test]
 fn test_simple_transfer() {
-    let group = RuntimeGroup::new(3, 3, &TEST_CONTRACT);
+    let group = RuntimeGroup::new(3, 3, near_test_contracts::rs_contract());
     let signer_sender = group.signers[0].clone();
     let signer_receiver = group.signers[1].clone();
 
@@ -598,7 +596,7 @@ fn test_simple_transfer() {
 
 #[test]
 fn test_create_account_with_transfer_and_full_key() {
-    let group = RuntimeGroup::new(3, 2, &TEST_CONTRACT);
+    let group = RuntimeGroup::new(3, 2, near_test_contracts::rs_contract());
     let signer_sender = group.signers[0].clone();
     let signer_receiver = group.signers[1].clone();
     let signer_new_account = group.signers[2].clone();
@@ -671,7 +669,7 @@ fn test_create_account_with_transfer_and_full_key() {
 
 #[test]
 fn test_account_factory() {
-    let group = RuntimeGroup::new(3, 2, &TEST_CONTRACT);
+    let group = RuntimeGroup::new(3, 2, near_test_contracts::rs_contract());
     let signer_sender = group.signers[0].clone();
     let signer_receiver = group.signers[1].clone();
     let signer_new_account = group.signers[2].clone();
@@ -697,7 +695,7 @@ fn test_account_factory() {
         }, "id": 0 },
         {"action_deploy_contract": {
             "promise_index": 0,
-            "code": base64::encode(&TEST_CONTRACT),
+            "code": base64::encode(near_test_contracts::rs_contract()),
         }, "id": 0 },
         {"action_function_call": {
             "promise_index": 0,
@@ -785,7 +783,7 @@ fn test_account_factory() {
                         }));
                      },
                      a3, Action::DeployContract(DeployContractAction{code}), {
-                        assert_eq!(code, &*TEST_CONTRACT);
+                        assert_eq!(code, near_test_contracts::rs_contract());
                      },
                      a4, Action::FunctionCall(FunctionCallAction{gas, deposit, ..}), {
                         assert_eq!(*gas, GAS_2);
@@ -828,7 +826,7 @@ fn test_account_factory() {
 
 #[test]
 fn test_create_account_add_key_call_delete_key_delete_account() {
-    let group = RuntimeGroup::new(4, 3, &TEST_CONTRACT);
+    let group = RuntimeGroup::new(4, 3, near_test_contracts::rs_contract());
     let signer_sender = group.signers[0].clone();
     let signer_receiver = group.signers[1].clone();
     let signer_new_account = group.signers[2].clone();
@@ -851,7 +849,7 @@ fn test_create_account_add_key_call_delete_key_delete_account() {
         }, "id": 0 },
         {"action_deploy_contract": {
             "promise_index": 0,
-            "code": base64::encode(&TEST_CONTRACT),
+            "code": base64::encode(near_test_contracts::rs_contract()),
         }, "id": 0 },
         {"action_function_call": {
             "promise_index": 0,
@@ -921,7 +919,7 @@ fn test_create_account_add_key_call_delete_key_delete_account() {
                         assert_eq!(access_key.permission, AccessKeyPermission::FullAccess);
                      },
                      a3, Action::DeployContract(DeployContractAction{code}), {
-                        assert_eq!(code, &*TEST_CONTRACT);
+                        assert_eq!(code, near_test_contracts::rs_contract());
                      },
                      a4, Action::FunctionCall(FunctionCallAction{gas, deposit, ..}), {
                         assert_eq!(*gas, GAS_2);
@@ -933,7 +931,8 @@ fn test_create_account_add_key_call_delete_key_delete_account() {
                      a6, Action::DeleteAccount(DeleteAccountAction{beneficiary_id}), {
                         assert_eq!(beneficiary_id.as_str(), "near_2");
                      }
-                     => [r2, ref1, ref2] );
+                     => [r2, r3, ref1] );
+
     assert_receipts!(group, "near_3" => r2 @ "near_0",
                      ReceiptEnum::Action(ActionReceipt{actions, ..}), {},
                      actions,
@@ -941,12 +940,28 @@ fn test_create_account_add_key_call_delete_key_delete_account() {
                         assert_eq!(*gas, GAS_3);
                         assert_eq!(*deposit, 0);
                      }
-                     => [ref3] );
+                     => [ref2] );
+
+    if checked_feature!(
+        "protocol_feature_allow_create_account_on_delete",
+        AllowCreateAccountOnDelete,
+        PROTOCOL_VERSION
+    ) {
+        assert_receipts!(group, "near_3" => r3 @ "near_2",
+                         ReceiptEnum::Action(ActionReceipt{actions, ..}), {},
+                         actions,
+                         a0, Action::Transfer(TransferAction{deposit}), {
+                            assert_eq!(*deposit, TESTING_INIT_BALANCE / 2);
+                         }
+                         => [ref3] );
+        assert_refund!(group, ref3 @ "near_0");
+    } else {
+        assert_refund!(group, r3 @ "near_2");
+    }
 
     assert_refund!(group, ref0 @ "near_0");
-    assert_refund!(group, ref1 @ "near_2");
+    assert_refund!(group, ref1 @ "near_0");
     assert_refund!(group, ref2 @ "near_0");
-    assert_refund!(group, ref3 @ "near_0");
 }
 
 #[test]
@@ -957,7 +972,7 @@ fn test_transfer_64len_hex() {
     let group = RuntimeGroup::new_with_account_ids(
         vec!["near_0".to_string(), "near_1".to_string(), account_id.clone()],
         2,
-        &TEST_CONTRACT,
+        near_test_contracts::rs_contract(),
     );
     let signer_sender = group.signers[0].clone();
     let signer_receiver = group.signers[1].clone();
@@ -1020,7 +1035,7 @@ fn test_create_transfer_64len_hex_fail() {
     let group = RuntimeGroup::new_with_account_ids(
         vec!["near_0".to_string(), "near_1".to_string(), account_id.clone()],
         2,
-        &TEST_CONTRACT,
+        near_test_contracts::rs_contract(),
     );
     let signer_sender = group.signers[0].clone();
     let signer_receiver = group.signers[1].clone();

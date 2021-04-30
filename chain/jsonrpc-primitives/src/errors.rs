@@ -1,5 +1,9 @@
+use std::fmt;
+
 use serde::{Deserialize, Serialize};
 use serde_json::{to_value, Value};
+
+use near_primitives::errors::{InvalidTxError, TxExecutionError};
 
 #[derive(Serialize)]
 pub struct RpcParseError(pub String);
@@ -14,6 +18,15 @@ pub struct RpcError {
     pub message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub data: Option<Value>,
+}
+
+/// A general Server Error
+#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Clone, near_rpc_error_macro::RpcError)]
+pub enum ServerError {
+    TxExecutionError(TxExecutionError),
+    Timeout,
+    Closed,
+    InternalError,
 }
 
 impl RpcError {
@@ -52,6 +65,9 @@ impl RpcError {
     pub fn parse_error(e: String) -> Self {
         RpcError::new(-32_700, "Parse error".to_owned(), Some(Value::String(e)))
     }
+    pub fn serialization_error(e: String) -> Self {
+        RpcError::new(-32_000, "Server error".to_owned(), Some(Value::String(e)))
+    }
     /// Create a method not found error.
     pub fn method_not_found(method: String) -> Self {
         RpcError::new(-32_601, "Method not found".to_owned(), Some(Value::String(method)))
@@ -73,5 +89,37 @@ impl From<actix::MailboxError> for RpcError {
 impl From<crate::errors::RpcParseError> for RpcError {
     fn from(parse_error: crate::errors::RpcParseError) -> Self {
         Self::invalid_params(parse_error.0)
+    }
+}
+
+impl fmt::Display for ServerError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ServerError::TxExecutionError(e) => write!(f, "ServerError: {}", e),
+            ServerError::Timeout => write!(f, "ServerError: Timeout"),
+            ServerError::Closed => write!(f, "ServerError: Closed"),
+            ServerError::InternalError => write!(f, "ServerError: Internal Error"),
+        }
+    }
+}
+
+impl From<InvalidTxError> for ServerError {
+    fn from(e: InvalidTxError) -> ServerError {
+        ServerError::TxExecutionError(TxExecutionError::InvalidTxError(e))
+    }
+}
+
+impl From<actix::MailboxError> for ServerError {
+    fn from(e: actix::MailboxError) -> Self {
+        match e {
+            actix::MailboxError::Closed => ServerError::Closed,
+            actix::MailboxError::Timeout => ServerError::Timeout,
+        }
+    }
+}
+
+impl From<ServerError> for RpcError {
+    fn from(e: ServerError) -> RpcError {
+        RpcError::server_error(Some(e))
     }
 }
